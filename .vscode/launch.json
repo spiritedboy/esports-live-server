@@ -1,0 +1,333 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "调试 FFmpeg 环境检测",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/ffmpeg_env_check",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 1 Remux",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_remux",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/input.mp4",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-output.flv"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 2 转码",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_transcode",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/input.mp4",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-transcode.flv",
+        "--no-realtime"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 3 合成",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_composite",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/mix/red.mp4",
+        "--input",
+        "${workspaceFolder}/build/samples/mix/lime.mp4",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-composite.flv",
+        "--layout",
+        "pip",
+        "--no-realtime"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 4 音视频同步",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_live",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/mix/red.mp4",
+        "--input",
+        "${workspaceFolder}/build/samples/mix/lime.mp4",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/game.m4a",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/voice.opus",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-live.flv",
+        "--stats-file",
+        "${workspaceFolder}/build/samples/debug-live.csv",
+        "--duration-ms",
+        "3000",
+        "--no-realtime"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 5 输出队列与恢复",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_live",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/mix/red.mp4",
+        "--input",
+        "${workspaceFolder}/build/samples/mix/lime.mp4",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/game.m4a",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/voice.opus",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-output-phase5.flv",
+        "--stats-file",
+        "${workspaceFolder}/build/samples/debug-output-phase5.csv",
+        "--duration-ms",
+        "3000",
+        "--packet-queue-count",
+        "4"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 6 分段录制",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_live",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/mix/red.mp4",
+        "--input",
+        "${workspaceFolder}/build/samples/mix/lime.mp4",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/game.m4a",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/voice.opus",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-phase6-live.flv",
+        "--stats-file",
+        "${workspaceFolder}/build/samples/debug-phase6-live.csv",
+        "--duration-ms",
+        "3000",
+        "--packet-queue-count",
+        "4",
+        "--record-prefix",
+        "${workspaceFolder}/build/samples/debug-phase6-record",
+        "--segment-ms",
+        "1000"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 6 录像提取",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_replay",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/phase6-record-000000.mp4",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-phase6-clip.mkv",
+        "--start-ms",
+        "200",
+        "--duration-ms",
+        "500"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 Phase 7 运行指标",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_live",
+      "args": [
+        "--input",
+        "${workspaceFolder}/build/samples/mix/red.mp4",
+        "--input",
+        "${workspaceFolder}/build/samples/mix/lime.mp4",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/game.m4a",
+        "--audio-input",
+        "${workspaceFolder}/build/samples/audio/voice.opus",
+        "--output",
+        "${workspaceFolder}/build/samples/debug-phase7-live.flv",
+        "--stats-file",
+        "${workspaceFolder}/build/samples/debug-phase7-live.csv",
+        "--duration-ms",
+        "3000",
+        "--packet-queue-count",
+        "4",
+        "--record-prefix",
+        "${workspaceFolder}/build/samples/debug-phase7-record",
+        "--segment-ms",
+        "1000",
+        "--metrics-file",
+        "${workspaceFolder}/build/samples/debug-phase7-metrics.csv"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "调试 JSON 配置启动",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/esports_live",
+      "args": [
+        "--config",
+        "${workspaceFolder}/config/server.json",
+        "--output",
+        "${workspaceFolder}/build/samples/config-debug.flv",
+        "--record-prefix",
+        "${workspaceFolder}/build/samples/config-debug-record",
+        "--stats-file",
+        "${workspaceFolder}/build/samples/config-debug-sync.csv",
+        "--metrics-file",
+        "${workspaceFolder}/build/samples/config-debug-metrics.csv"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "CMake: build Debug",
+      "setupCommands": [
+        {
+          "description": "启用 GDB 格式化输出",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

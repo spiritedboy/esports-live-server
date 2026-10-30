@@ -1,0 +1,52 @@
+{
+  "inputs": [
+    "build/samples/mix/red.mp4",
+    "build/samples/mix/lime.mp4"
+  ],
+  "audio_inputs": [
+    "build/samples/audio/game.m4a",
+    "build/samples/audio/voice.opus"
+  ],
+  "output": "build/samples/config-live.flv",
+  "layout": "split",
+  "width": 640,
+  "height": 360,
+  "fps": 25,
+  "duration_ms": 3000,
+  "realtime": true,
+  "stale_ms": 500,
+  "timeout_ms": 5000,
+  "gains": [
+    1.0,
+    0.5
+  ],
+  "muted": [
+    false,
+    false
+  ],
+  "audio_offsets_ms": [
+    0,
+    0
+  ],
+  "video_offsets_ms": [
+    0,
+    0
+  ],
+  "video_bitrate": 1200000,
+  "gop_ms": 1000,
+  "vbv_ms": 500,
+  "video_queue_frames": 4,
+  "audio_queue_blocks": 16,
+  "output_timeout_ms": 3000,
+  "reconnect_attempts": 5,
+  "retry_backoff_ms": 250,
+  "output_latency_ms": 500,
+  "packet_queue_count": 256,
+  "packet_queue_bytes": 8388608,
+  "record_prefix": "build/samples/config-record",
+  "record_format": "mp4",
+  "segment_ms": 1000,
+  "record_queue_bytes": 16777216,
+  "stats_file": "build/samples/config-sync.csv",
+  "metrics_file": "build/samples/config-metrics.csv"
+}

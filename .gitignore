@@ -1,0 +1,7 @@
+/build/
+/core
+/core.*
+*.log
+
+__pycache__/
+*.pyc

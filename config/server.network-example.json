@@ -1,0 +1,18 @@
+{
+  "inputs": [
+    "rtmp://192.0.2.10/live/game",
+    "rtsp://192.0.2.20:554/stream1"
+  ],
+  "audio_inputs": [],
+  "output": "rtmp://192.0.2.30/live/esports",
+  "layout": "split",
+  "width": 1280,
+  "height": 720,
+  "fps": 25,
+  "duration_ms": 0,
+  "realtime": true,
+  "timeout_ms": 5000,
+  "output_timeout_ms": 3000,
+  "reconnect_attempts": 5,
+  "retry_backoff_ms": 250
+}
