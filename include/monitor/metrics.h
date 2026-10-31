@@ -1,3 +1,7 @@
+/*
+ * 跨线程计数用原子变量，单次指标快照不保证所有字段来自同一瞬间。
+ * API累计耗时仅包围send/receive调用，不含回调处理，也不等同于编解码后台线程CPU总量。
+ */
 #ifndef ESPORTS_MONITOR_METRICS_H
 #define ESPORTS_MONITOR_METRICS_H
 #include "common/ffmpeg.h"

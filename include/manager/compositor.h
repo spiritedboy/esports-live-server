@@ -1,3 +1,6 @@
+/*
+ * Phase 3视频节目配置；时间参数为毫秒，switch_at_ms=-1表示不安排切换。
+ */
 #ifndef ESPORTS_MANAGER_COMPOSITOR_H
 #define ESPORTS_MANAGER_COMPOSITOR_H
 #include "manager/transcoder.h"

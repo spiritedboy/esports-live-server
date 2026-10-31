@@ -1,3 +1,6 @@
+/*
+ * 滤镜图封装，由主处理线程独占；输入帧只借用，mix返回的新帧归调用者所有。
+ */
 #ifndef ESPORTS_MIXER_VIDEO_MIXER_H
 #define ESPORTS_MIXER_VIDEO_MIXER_H
 #include "codec/media_codec.h"

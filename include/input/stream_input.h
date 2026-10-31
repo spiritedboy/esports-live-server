@@ -1,3 +1,6 @@
+/*
+ * 单线程解复用器，context()只返回借用指针，不能由调用者释放。
+ */
 #ifndef ESPORTS_INPUT_STREAM_INPUT_H
 #define ESPORTS_INPUT_STREAM_INPUT_H
 #include "common/ffmpeg.h"

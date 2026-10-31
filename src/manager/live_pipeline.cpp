@@ -1,3 +1,8 @@
+/*
+ * 完整节目调度中心。输入线程提供解码帧；本线程选帧/混音/合成/编码；输出与录制各有工作线程。
+ * 阅读run_live中的编号段落：建源 → 建输出 → 分流回调 → 调度 → 视频/音频处理 → 排空退出。
+ * 时间单位：tick=视频帧序号，cursor=48kHz采样位置，us=节目微秒，wall_start=单调时钟微秒。
+ */
 #include "manager/live_pipeline.h"
 #include "input/video_source.h"
 #include "input/audio_source.h"
@@ -55,6 +60,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
     MediaEncoder video_encoder, audio_encoder;
     VideoMixer video_mixer;
     AudioMixer audio_mixer(options.audio_inputs.size());
+    // ① 输入线程统一托管：先通知所有源停止，再逐一join，防止某个源卡在满队列。
     struct Sources {
         std::vector<std::unique_ptr<VideoSource>> videos;
         std::vector<std::unique_ptr<AudioSource>> audios;
@@ -101,6 +107,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
             audio_mixer.set_gain(i, options.gains[i]);
             audio_mixer.set_muted(i, options.muted[i]);
         }
+        // 等待首批帧或失败状态，但设置总期限；单路失效不会无限阻塞整个节目启动。
         const int64_t startup = av_gettime_relative() + int64_t(options.timeout_ms + 1000) * 1000;
         while (!stop) {
             bool ready = true;
@@ -115,6 +122,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         for (auto& source : group.audios) usable = usable || (source->queue().ready() && !source->queue().exhausted());
         if (!usable) throw std::runtime_error("所有音视频源均失败或没有媒体");
 
+        // ② 建立降级黑帧、编码器、异步输出、录制和合成器；源失效时仍能形成节目。
         Frame black = make_frame();
         black->format = AV_PIX_FMT_YUV420P;
         black->width = options.width; black->height = options.height;
@@ -132,6 +140,8 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         output.open(options.output, {video_encoder.context(), audio_encoder.context()});
         recorder.open({video_encoder.context(), audio_encoder.context()});
         video_mixer.configure(options.layout, options.width, options.height, options.fps);
+        // ③ 编码输出在当前线程同步回调：先为录制克隆引用，再把原包移动给推流队列。
+        // 流编号固定为视频0/音频1；传递的是编码器time_base，封装器稍后再次换算。
         const PacketConsumer video_packet = [&](Packet p) {
             p->stream_index = 0; recorder.submit(p.get(), video_encoder.context()->time_base); output.submit(std::move(p), video_encoder.context()->time_base);
         };
@@ -139,6 +149,8 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
             p->stream_index = 1; recorder.submit(p.get(), audio_encoder.context()->time_base); output.submit(std::move(p), audio_encoder.context()->time_base);
         };
         std::vector<Frame> current(group.videos.size());
+        // ④ 节目时钟不直接用输入PTS驱动：视频tick/fps秒，音频cursor/48000秒。
+        // 各源已经归一化，调度器按节目时刻选择对应画面和音频窗口。
         int64_t tick = 0, cursor = 0, last_end = 0, next_report = 0;
         int64_t video_end = 0, audio_end = 0;
         const int64_t wall_start = av_gettime_relative();
@@ -150,6 +162,8 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 const int64_t scheduled = std::min(
                     av_rescale_q(tick, AVRational{1, options.fps}, AVRational{1, AV_TIME_BASE}),
                     av_rescale_q(cursor, AVRational{1, 48000}, AVRational{1, AV_TIME_BASE}));
+                // 实时网络落后过多时跳到当前节目时刻，不追发全部历史积压；音频对齐编码块边界。
+                // 同时使旧编码窗口失效并请求新IDR，避免跳过帧后继续发送断裂参考链。
                 if (elapsed - scheduled > int64_t(options.output_options.queue.latency_ms) * 1000) {
                     const int64_t new_tick = av_rescale_rnd(elapsed, options.fps, AV_TIME_BASE, AV_ROUND_UP);
                     const int64_t now_samples = av_rescale_rnd(elapsed, 48000, AV_TIME_BASE, AV_ROUND_UP);
@@ -171,6 +185,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 last_end = std::max(last_end, av_rescale_q(source->queue().last_end(),
                                     AVRational{1, 48000}, AVRational{1, AV_TIME_BASE}));
             }
+            // 比较两条轨道下一次处理时刻，先处理较早的一条；不能直接比较tick和cursor整数。
             const bool video_turn = av_compare_ts(tick, AVRational{1, options.fps},
                                                    cursor, AVRational{1, 48000}) <= 0;
             const int64_t us = video_turn
@@ -187,6 +202,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 }
             }
             if (stop) break;
+            // ⑤ 视频：取每路不晚于节目时刻的最新帧；短缺沿用上一帧，过期则黑帧。
             if (video_turn) {
                 std::vector<const AVFrame*> frames;
                 for (size_t i = 0; i < current.size(); ++i) {
@@ -205,6 +221,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                     switched = true;
                 }
                 const int64_t mix_start = av_gettime_relative();
+                // 合成滤镜按1/fps计时；输出给编码器之前换到其1/90000时间基。
                 Frame frame = video_mixer.mix(frames, tick);
                 processing_us += av_gettime_relative() - mix_start;
                 frame->pts = av_rescale_q(tick, AVRational{1, options.fps}, video_encoder.context()->time_base);
@@ -213,6 +230,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 ++tick; ++video_count;
                 video_end = av_rescale_q(tick, AVRational{1, options.fps}, AVRational{1, AV_TIME_BASE});
             } else {
+                // ⑥ 音频：按AAC输入块长创建同一采样窗口；最后一个窗口可能不足整块。
                 int count = audio_encoder.context()->frame_size;
                 if (end != INT64_MAX)
                     count = static_cast<int>(std::min<int64_t>(count,
@@ -221,6 +239,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 std::vector<Frame> blocks;
                 std::vector<const AVFrame*> frames;
                 for (auto& source : group.audios) {
+                    // 先预填静音再覆盖队列中已有数据。实时模式不等慢源，离线模式可有限等待。
                     Frame block = audio_frame(count, cursor);
                     int filled = 0;
                     if (options.realtime) source->queue().read_window(block.get(), filled, 0);
@@ -242,6 +261,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 Frame mixed = audio_mixer.mix(frames, cursor, count);
                 processing_us += av_gettime_relative() - mix_start;
                 audio_encoder.send(mixed.get(), audio_packet);
+                // 音频位置按实际采样数推进，避免用毫秒取整造成长时间累积误差。
                 cursor += count; audio_samples += count;
                 audio_end = av_rescale_q(cursor, AVRational{1, 48000}, AVRational{1, AV_TIME_BASE});
             }
@@ -253,6 +273,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                 next_report = us + AV_TIME_BASE;
             }
         }
+        // ⑦ 正常结束排空编码器尾包，再排空输出/录制队列；用户停止则优先中断推流等待。
         if (!stop) {
             video_encoder.send(nullptr, video_packet);
             audio_encoder.send(nullptr, audio_packet);
@@ -268,6 +289,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         if (!stop) throw;
         return 130;
     }
+    // 停止并回收所有输入线程后采最终统计；异常路径由Sources析构执行同样的回收。
     group.shutdown();
     report_metrics();
     for (size_t i = 0; i < group.audios.size(); ++i)

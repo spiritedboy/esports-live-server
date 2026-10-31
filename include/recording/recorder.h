@@ -1,3 +1,7 @@
+/*
+ * 独立录制线程及容量受限的编码包队列；空prefix禁用录制。
+ * 主线程submit不等待磁盘写完，finish关闭入口后排空并join。
+ */
 #ifndef ESPORTS_RECORDING_RECORDER_H
 #define ESPORTS_RECORDING_RECORDER_H
 #include "output/stream_output.h"

@@ -1,3 +1,7 @@
+/*
+ * Phase 2入口：单路解码、格式转换、重新编码。
+ * 保留为学习与回归测试入口，完整多源节目请从live_main.cpp阅读。
+ */
 #include "manager/transcoder.h"
 #include <cerrno>
 #include <iostream>

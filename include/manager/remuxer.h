@@ -1,3 +1,6 @@
+/*
+ * Phase 1单路转封装配置与入口，不涉及解码或混音。
+ */
 #ifndef ESPORTS_MANAGER_REMUXER_H
 #define ESPORTS_MANAGER_REMUXER_H
 #include "common/ffmpeg.h"

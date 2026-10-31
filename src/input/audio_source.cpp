@@ -1,3 +1,7 @@
+/*
+ * 一路音频一个工作线程：解复用 → 解码 → 同步重采样 → AudioQueue。
+ * 输出统一为48kHz双声道FLTP，PTS单位是采样；同URL的视频仍由另一线程独立打开。
+ */
 #include "input/audio_source.h"
 #include "input/stream_input.h"
 #include <pthread.h>
@@ -5,6 +9,7 @@
 #include <cerrno>
 namespace esports {
 AudioSource::AudioSource(const std::string& url, int timeout_ms, int offset_ms, Logger& log, size_t queue_blocks) : queue_(queue_blocks) {
+    // 新线程继承创建线程的信号掩码；创建后恢复主线程掩码，使退出信号由主线程处理。
     sigset_t blocked, previous;
     sigemptyset(&blocked);
     sigaddset(&blocked, SIGINT);
@@ -63,6 +68,7 @@ void AudioSource::run(std::string url, int timeout_ms, int offset_ms, Logger& lo
                 }
                 if (origin < -(int64_t(1) << 50) || origin > (int64_t(1) << 50))
                     throw std::runtime_error("音频起点越界");
+                // 先减容器共同起点，再换成48kHz采样位置；1ms=48采样，正偏移使声音后移。
                 pts = av_rescale_q(us - origin, AVRational{1, AV_TIME_BASE},
                                    AVRational{1, 48000}) + int64_t(offset_ms) * 48;
             }

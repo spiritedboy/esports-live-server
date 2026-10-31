@@ -1,3 +1,7 @@
+/*
+ * 时间轴辅助：容器共同起点保留轨道偏移，SourceClock修补缺失/跳变时间戳。
+ * 它不推断不同设备的绝对时钟关系；独立设备偏移仍需实测和配置。
+ */
 #ifndef ESPORTS_SYNC_AV_SYNCHRONIZER_H
 #define ESPORTS_SYNC_AV_SYNCHRONIZER_H
 #include "common/ffmpeg.h"
@@ -21,6 +25,7 @@ public:
             initialized_ = true;
             return value;
         }
+        // bias只在不连续时更新，把新时间段接到expected_；正常帧保留原来的相对偏移。
         int64_t mapped = raw + bias_;
         if (initialized_ && (mapped <= previous_ || std::llabs(mapped - expected_) > int64_t(rate_) * 2)) {
             bias_ += expected_ - mapped;

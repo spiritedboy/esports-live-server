@@ -445,6 +445,13 @@ esports_live忽略SIGXFSZ，允许write返回EFBIG并走FFmpeg错误传播路径
 该信号策略当前用于esports_live，不改变其他独立历史阶段程序。
 
 
+## 源码阅读
+
+从[中文代码阅读路线](docs/code-reading-guide.md)开始，再看
+[src/live_main.cpp](src/live_main.cpp)和[src/manager/live_pipeline.cpp](src/manager/live_pipeline.cpp)。
+主直播流程已分段标注；源码/头文件说明了模块职责、线程边界、FFmpeg资源所有权和时间戳单位，
+测试和脚本也补充了验证目的。旧阶段入口用于逐步学习，src/main.cpp仅做环境检测。
+
 ## JSON配置启动（2026-10-30）
 
 ```bash

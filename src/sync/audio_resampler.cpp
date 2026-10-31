@@ -1,3 +1,7 @@
+/*
+ * 直播音频时钟适配：将不同采样率/布局转换为48kHz双声道FLTP。
+ * 小误差通过swr_set_compensation逐渐修正；大间断重建重采样状态，队列负责补静音。
+ */
 #include "sync/audio_resampler.h"
 #include "mixer/audio_mixer.h"
 #include <algorithm>
@@ -26,6 +30,8 @@ void AudioResampler::send(const AVFrame* frame, int64_t pts, const FrameConsumer
     if (rate_ != frame->sample_rate || format_ != frame->format ||
         av_channel_layout_compare(&layout_, &frame->ch_layout))
         throw std::runtime_error("音频参数中途变化");
+    // next_是下一个输出采样位置；还要加重采样器内部缓存，才是预期的输入时间位置。
+    // 忽略滤波延迟会把正常缓存当成设备漂移。
     const int64_t predicted = next_ + swr_get_delay(context_, 48000);
     const int64_t error = pts - predicted;
     stats_.max_error = std::max(stats_.max_error, static_cast<int64_t>(std::llabs(error)));
@@ -36,6 +42,7 @@ void AudioResampler::send(const AVFrame* frame, int64_t pts, const FrameConsumer
         next_ = std::max(next_, pts);
         ++stats_.gaps;
     } else if (std::llabs(error) > 24) {
+        // 在48000个输出采样距离内渐变补偿，单次限制±240采样，避免直接跳PTS造成突变。
         const int delta = static_cast<int>(std::max<int64_t>(-240, std::min<int64_t>(240, error)));
         ff_check(swr_set_compensation(context_, delta, 48000), "补偿音频时钟漂移");
         ++stats_.corrections;

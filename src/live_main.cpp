@@ -1,3 +1,7 @@
+/*
+ * 完整直播程序入口。阅读顺序：收集CLI → 合并JSON → 校验LiveOptions → run_live。
+ * 这里只处理启动参数和进程信号；媒体调度在manager/live_pipeline.cpp。
+ */
 #include "manager/live_pipeline.h"
 #include "config/live_config.h"
 #include <set>
@@ -51,6 +55,8 @@ int main(int argc, char** argv) {
         const auto indexed = [](const std::string& key) {
             return key == "--gain" || key == "--audio-offset-ms" || key == "--video-offset-ms";
         };
+        // 先记录CLI覆盖身份，再移除对应JSON值；这样被覆盖的旧数值不参与最终范围校验。
+        // 逐路参数的身份包含索引，输入列表则整组替换；静音开关随后按顺序应用。
         std::set<std::string> overrides;
         for (size_t i = 0; i < command.size(); ++i) {
             const auto& key = command[i];
@@ -79,6 +85,7 @@ int main(int argc, char** argv) {
                 arguments.push_back(key); arguments.push_back(value);
             }
         }
+        // 合并结果统一走下方原参数解析器，避免JSON与CLI出现两套默认值和校验规则。
         arguments.insert(arguments.end(), command.begin(), command.end());
         bool has_change = false;
         std::vector<std::pair<size_t, double>> gains;
@@ -180,6 +187,7 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("音频源协议不支持");
         options.gains.assign(options.audio_inputs.size(), 1);
         options.muted.assign(options.audio_inputs.size(), false);
+        // 等最终源列表确定后才分配逐路参数；at()会拒绝CLI替换列表后遗留的越界索引。
         options.audio_offsets.assign(options.audio_inputs.size(), 0);
         options.video_offsets.assign(options.inputs.size(), 0);
         for (const auto& entry : gains) options.gains.at(entry.first) = entry.second;
@@ -188,6 +196,7 @@ int main(int argc, char** argv) {
         for (const auto& entry : video_offsets) options.video_offsets.at(entry.first) = entry.second;
         if (has_change != (options.change_at_ms >= 0) || options.change_index >= options.audio_inputs.size())
             throw std::runtime_error("动态音量需要同时设置时间和有效音频索引");
+        // 检查/导出在启动流水线前退出，不验证文件存在、端点可达或编码器能否打开。
         if (dump_config) { std::cout << esports::serialize_live_config(options) << '\n'; return 0; }
         if (check_config) { std::cout << "配置校验通过（未打开媒体或输出）\n"; return 0; }
         return esports::run_live(options, stop_requested, log);

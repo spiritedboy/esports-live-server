@@ -3,6 +3,7 @@
 set -euo pipefail
 directory="${1:-build/samples/mix}"
 mkdir -p -- "$directory"
+# 不同颜色让布局可通过像素验证，不同尺寸/帧率用于检验缩放与统一调度。
 colors=(red lime blue yellow)
 sizes=(160x120 256x144 320x180 128x96)
 rates=(15 30 24 25)

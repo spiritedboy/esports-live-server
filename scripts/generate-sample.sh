@@ -3,6 +3,7 @@
 set -euo pipefail
 output="${1:-build/samples/input.mp4}"
 mkdir -p -- "$(dirname -- "$output")"
+# -n拒绝覆盖；-bf 2刻意生成含B帧的输入，便于验证PTS/DTS和解码排空。
 ffmpeg -hide_banner -loglevel error -n \
   -f lavfi -i testsrc2=size=320x180:rate=25 \
   -f lavfi -i sine=frequency=1000:sample_rate=48000 \

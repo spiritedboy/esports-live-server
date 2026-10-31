@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 使用真实解码与尾帧计数检查排空；重编码后字节通常不同，不能照搬Remux压缩包哈希判据。
 """Phase 2：真实编解码、格式转换和排空验证。"""
 import argparse
 import json

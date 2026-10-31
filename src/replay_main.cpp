@@ -1,3 +1,7 @@
+/*
+ * 录像提取/回放入口：索引定位 → 向前找关键帧 → 重设时间原点 → 转封装。
+ * 不重新编码，不做精确逐帧裁切，也不会将录像插入正在运行的直播节目。
+ */
 #include "input/stream_input.h"
 #include "output/stream_output.h"
 #include <iostream>
@@ -114,6 +118,7 @@ int main(int argc, char** argv) {
         io.arm();
         const int64_t target = av_rescale_q(base + start_ms * 1000, AVRational{1, AV_TIME_BASE},
                                            context->streams[video]->time_base);
+        // target用选定视频流time_base，向请求时间之前的关键帧定位；实际片段可能比请求更早。
         esports::ff_check(av_seek_frame(context, video, target, AVSEEK_FLAG_BACKWARD), "定位前方关键帧");
         avformat_flush(context);
         esports::StreamOutput mux(io, network, format);
@@ -150,6 +155,7 @@ int main(int argc, char** argv) {
                 if (all) break;
                 continue;
             }
+            // extract不等待；replay按DTS相对起点匹配单调墙钟，避免把整段录像瞬间灌入网络。
             if (mode == "replay") {
                 while (!stopped && av_gettime_relative() - wall < dts - origin)
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));

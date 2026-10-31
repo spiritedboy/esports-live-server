@@ -1,3 +1,7 @@
+/*
+ * 启动配置适配层：严格解析JSON，再转换成既有CLI选项交给live_main统一校验。
+ * 不在这里打开媒体、创建线程或维护第二套参数默认值。
+ */
 #include "config/live_config.h"
 #include "picojson.h"
 #include <fstream>
@@ -68,6 +72,7 @@ void check_number_grammar(const std::string& text) {
         }
     }
 }
+// PicoJSON以double存数字；限制到可精确表示的整数范围，防止类型转换悄悄损失精度。
 std::string scalar(const picojson::value& value, const std::string& key, bool number, bool integral = true) {
     if (!number) {
         if (!value.is<std::string>()) throw std::runtime_error(key + "必须为字符串");
@@ -84,6 +89,7 @@ std::string scalar(const picojson::value& value, const std::string& key, bool nu
 }
 std::string option(std::string name) { for (char& c : name) if (c == '_') c = '-'; return "--" + name; }
 }
+// 只读取普通文件且限制为1MiB；禁止重复键/未知键，防止配置拼错却悄悄回退默认值。
 std::vector<std::string> load_live_config(const std::string& path) {
     struct stat info = {};
     if (stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode))
@@ -144,6 +150,7 @@ std::vector<std::string> load_live_config(const std::string& path) {
     }
     return args;
 }
+// 导出已经合并并校验的有效配置；不隐去URL原值，因此输出中可能包含推流凭据。
 std::string serialize_live_config(const LiveOptions& o) {
     picojson::object result;
     const auto num = [&](const std::string& key, double n) { result[key] = picojson::value(n); };

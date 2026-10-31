@@ -1,3 +1,6 @@
+/*
+ * JSON与LiveOptions之间的启动适配接口，完整字段及例子见docs/configuration.md。
+ */
 #ifndef ESPORTS_CONFIG_LIVE_CONFIG_H
 #define ESPORTS_CONFIG_LIVE_CONFIG_H
 #include "manager/live_pipeline.h"

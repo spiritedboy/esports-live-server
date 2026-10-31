@@ -1,3 +1,4 @@
+// 检查共享像素在源释放后仍可读，并验证make_writable后的修改不会影响另一引用。
 #include "codec/media_converter.h"
 #include <iostream>
 int main() {

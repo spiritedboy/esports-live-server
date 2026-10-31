@@ -1,3 +1,7 @@
+/*
+ * 一路视频一个工作线程：打开源 → 解码 → 缩放/像素转换 → 时间轴归一化 → FrameQueue。
+ * 线程只生产帧，主处理线程负责选帧；输入失败后关闭队列，不在这里自动重连。
+ */
 #include "input/video_source.h"
 #include "input/stream_input.h"
 #include "codec/media_converter.h"
@@ -53,6 +57,7 @@ void VideoSource::run(std::string url, int width, int height, int timeout_ms, Lo
         const AVRational rate = av_guess_frame_rate(format, stream, nullptr);
         if (rate.num <= 0 || rate.den <= 0) throw std::runtime_error("无法确定源帧率");
         const int64_t default_duration = av_rescale_q(1, av_inv_q(rate), AVRational{1, AV_TIME_BASE});
+        // 完整直播使用容器共同原点保留轨道偏移；早期纯视频合成用首视频帧作为原点。
         int64_t origin = common_origin ? container_origin_us(format) : AV_NOPTS_VALUE;
         int64_t previous = AV_NOPTS_VALUE;
         SourceClock clock(AV_TIME_BASE);
@@ -82,6 +87,7 @@ void VideoSource::run(std::string url, int width, int height, int timeout_ms, Lo
                 : default_duration;
             if (converted->duration <= 0 || converted->duration > AV_TIME_BASE)
                 converted->duration = default_duration;
+            // 移动所有权到跨线程队列；队列满会等待，stop关闭队列可解除此等待。
             queue_.push(std::move(converted));
         };
         Packet packet = make_packet();

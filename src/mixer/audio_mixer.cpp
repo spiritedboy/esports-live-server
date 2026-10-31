@@ -1,3 +1,7 @@
+/*
+ * 混音器接收已对齐到同一采样窗口的PCM：逐源增益 → 求和 → 双声道联动限幅。
+ * 不在此解码或调整时间轴；增益状态与mix均由主处理线程访问。
+ */
 #include "mixer/audio_mixer.h"
 #include <algorithm>
 #include <cmath>
@@ -59,6 +63,7 @@ Frame AudioMixer::mix(const std::vector<const AVFrame*>& frames, int64_t pts, in
                 sum[channel] += value * gain.current;
             }
         }
+        // 两声道使用同一限幅系数，尽量保持左右声像；这是简单峰值保护，不是响度标准化。
         const double peak = std::max(std::abs(sum[0]), std::abs(sum[1]));
         const double needed = peak > .95 ? .95 / peak : 1;
         limiter_ = std::min(needed, limiter_ + 1.0 / 4800); // 快速抑制、约100ms恢复。

@@ -1,3 +1,4 @@
+// 用确定的PCM检验增益、限幅、采样窗口和时钟修复；600秒是加速媒体时间，不是实际等待600秒。
 #include "mixer/audio_mixer.h"
 #include "sync/audio_resampler.h"
 #include "queue/audio_queue.h"
@@ -67,6 +68,7 @@ int main() {
     const auto abnormal = broken.stats();
     if (!abnormal.missing || abnormal.resets < 3 || !abnormal.gaps) return 5;
 
+    // 窗口[0,1024)只有[240,720)有输入；其余位置必须保留初始化的静音。
     AudioQueue queue;
     Frame first = audio_frame(480, 240);
     fill(first.get(), .5f);

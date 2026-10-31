@@ -1,3 +1,7 @@
+/*
+ * 编码线程通过有界队列交付包，输出工作线程独占FFmpeg封装与网络连接。
+ * 恢复流程：丢旧窗口 → 请求新IDR → 有限退避 → 建连接/写媒体头 → 以共同原点继续音视频。
+ */
 #include "output/async_output.h"
 #include <pthread.h>
 #include <chrono>
@@ -33,6 +37,7 @@ AsyncOutput::~AsyncOutput() {
 }
 void AsyncOutput::open(const std::string& url, const std::vector<AVCodecContext*>& codecs) {
     if (description_) throw std::logic_error("异步输出已打开");
+    // 只快照编码参数，不让工作线程并发访问正在编码的AVCodecContext。
     description_ = avformat_alloc_context();
     if (!description_) throw std::bad_alloc();
     for (const auto* codec : codecs) {
@@ -93,6 +98,7 @@ void AsyncOutput::cancel() {
 void AsyncOutput::finish(const volatile std::sig_atomic_t* user_stop) {
     if (finished_) { check(); return; }
     finished_ = true;
+    // 关闭入口但保留已排队数据，工作线程排空后退出；cancel则丢弃缓存并中断I/O。
     queue_.close();
     if (worker_.joinable()) {
         while (true) {
@@ -120,10 +126,13 @@ OutputStats AsyncOutput::snapshot() const {
 void AsyncOutput::run(std::string url) {
     IoControl io(stop_, options_.timeout_ms);
     std::unique_ptr<PacketSink> sink;
+    // 会话代次要与队列代次一致；重连后的origin由新IDR确定，音视频共用该微秒原点。
     uint64_t session_epoch = 0;
     int64_t origin = 0;
     unsigned retries = 0;
     bool recovering = false, session_started = false;
+    // 重试预算是本次输出生命周期累计值，成功连接也不清零，防止无限重连。
+    // 退避用条件变量等待，cancel可立即唤醒；本地文件错误直接上抛，不走重连。
     const auto recover = [&](const std::string& reason) {
         sink.reset();
         if (!network_ || retries >= static_cast<unsigned>(options_.reconnect_attempts))
@@ -197,6 +206,7 @@ void AsyncOutput::run(std::string url) {
                 session_epoch = item.epoch;
                 origin = item.dts_us;
             }
+            // AAC编码延迟可能产生早于首IDR的包；丢掉预卷，避免新会话出现原点之前的音频。
             if (network_ && item.dts_us < origin) { queue_.dropped(item); continue; }
             const int64_t writing = av_gettime_relative();
             try {

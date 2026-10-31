@@ -1,3 +1,7 @@
+/*
+ * 格式适配：视频转YUV420P；单路转码音频经重采样和FIFO凑齐编码器需要的块。
+ * 此处AudioConverter用于Phase 2；完整直播的时钟漂移处理见sync/audio_resampler.cpp。
+ */
 #include "codec/media_converter.h"
 #include <algorithm>
 #include <cstdlib>
@@ -5,6 +9,8 @@ namespace esports {
 Frame VideoConverter::convert(const AVFrame* source, int width, int height) {
     if (source->format == AV_PIX_FMT_YUV420P && source->width == width && source->height == height) {
         Frame output = make_frame();
+        // 新建帧外壳并增加像素引用，不拷贝整幅图；source销毁后output仍有效。
+        // 若后续要改共享像素，先av_frame_make_writable；改PTS等外壳字段无需复制像素。
         ff_check(av_frame_ref(output.get(), source), "引用同格式视频帧");
         output->sample_aspect_ratio = AVRational{1, 1};
         // 共享只读像素，但不把输入I/P/B类型作为重新编码决策。
@@ -40,6 +46,8 @@ Frame AudioConverter::allocate(int samples) {
     ff_check(av_frame_get_buffer(frame.get(), 0), "分配音频帧");
     return frame;
 }
+// 重采样输出块长不一定等于AAC frame_size，FIFO把零散PCM拼成编码块。
+// 最后一次允许送不足整块的尾部；next_pts_按实际送出的采样数累加。
 void AudioConverter::drain(bool final, const FrameConsumer& consume) {
     const int block = target_->frame_size;
     if (block <= 0) throw std::runtime_error("AAC frame_size 无效");

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 独立解码输出后检查区域像素和帧时间戳；退出码为0本身不能证明布局与CFR正确。
 """Phase 3：像素区域、CFR 时间戳、源故障和线程退出的真实集成测试。"""
 import argparse
 import json

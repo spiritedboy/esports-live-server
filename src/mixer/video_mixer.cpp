@@ -1,3 +1,7 @@
+/*
+ * 合成器只处理同一节目时刻的帧；选帧和缺失源处理由上层调度完成。
+ * 滤镜图路径为buffer → scale/stack/overlay → buffersink，图及子节点归本类持有。
+ */
 #include "mixer/video_mixer.h"
 #include <sstream>
 extern "C" {
@@ -22,6 +26,7 @@ void VideoMixer::configure(const std::string& layout, int width, int height, int
     try {
         for (int i = 0; i < count; ++i) {
             const std::string name = "in" + std::to_string(i);
+            // buffer声明的time_base=1/fps，所以mix注入的是节目tick，不能仍用源微秒PTS。
             const std::string parameters = "video_size=" + std::to_string(width) + "x" +
                 std::to_string(height) + ":pix_fmt=" + std::to_string(AV_PIX_FMT_YUV420P) +
                 ":time_base=1/" + std::to_string(fps) + ":pixel_aspect=1/1";
@@ -79,6 +84,8 @@ Frame VideoMixer::mix(const std::vector<const AVFrame*>& frames, int64_t tick) {
         Frame reference = make_frame();
         ff_check(av_frame_ref(reference.get(), frames[i]), "引用待合成帧");
         reference->pts = tick;
+        // flags=0且帧为引用计数帧时，成功送入会转移reference的缓冲引用。
+        // 原始输入仍由上层持有；滤镜只接管这里新建的引用。
         ff_check(av_buffersrc_add_frame_flags(sources_[i], reference.get(), 0), "输入合成帧");
     }
     Frame output = make_frame();

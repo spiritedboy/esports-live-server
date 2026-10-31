@@ -1,3 +1,7 @@
+/*
+ * 直播专用重采样与时钟补偿器，输入pts_samples和输出PTS都按1/48000计时。
+ * 送入的AVFrame仅借用，输出Frame经回调移动交付。
+ */
 #ifndef ESPORTS_SYNC_AUDIO_RESAMPLER_H
 #define ESPORTS_SYNC_AUDIO_RESAMPLER_H
 #include "codec/media_codec.h"

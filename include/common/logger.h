@@ -1,3 +1,6 @@
+/*
+ * 线程安全日志接口；借用的输出流须比Logger及所有调用线程活得更久。
+ */
 #ifndef ESPORTS_COMMON_LOGGER_H
 #define ESPORTS_COMMON_LOGGER_H
 

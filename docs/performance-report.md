@@ -557,3 +557,23 @@ config-sync.csv与config-metrics.csv；主FLV完整解码成功。分段解码�
 README、configuration.md、开发计划、学习笔记、架构及VSCode配置均已更新，JSON格式检查通过。
 配置仅启动时读取，不支持热更新；check/dump不验收输入可读性或网络连接。
 真实RTMP、24小时与其他既有未验收项保持未完成；没有Git提交。
+
+## 2026-10-31：中文源码注释维护回归
+
+此次修改覆盖70个自有代码/构建文件，新增306行注释；src/include所有文件均补充模块职责，
+核心交接点注明线程、资源所有权、时间基、背压和异常恢复。测试与脚本增加验证目的说明。
+新增docs/code-reading-guide.md，并同步README、学习笔记和开发计划；未修改第三方源码。
+
+变更前后逐行比较确认代码/构建文件仅新增注释、没有删除或改写原有语句；
+Python AST比较一致，Shell语法检查、阅读指南链接检查及git diff --check通过。
+
+| 验证 | 真实结果 | 日志 |
+|---|---|---|
+| Debug构建 | 成功，退出0，无warning/error诊断 | build/comment-audit/debug-build.log |
+| Release构建 | 成功，退出0，无warning/error诊断 | build/comment-audit/release-build.log |
+| Debug CTest | 16/16通过，36.57秒 | build/comment-audit/debug-ctest.log |
+| Release CTest | 16/16通过，34.59秒 | build/comment-audit/release-ctest.log |
+| 仅注释变更检查 | 70文件、306行；原语句保留 | build/comment-audit/change-check.txt |
+
+本轮未重复ASan/UBSan或压力测试；未运行真实网络验收，也不把文档维护视为新增媒体能力。
+此前长期稳定性、真实设备/网络等未验收项仍然保留。未进行Git提交。

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 核对压缩数据与时间轴，确保转封装没有偷偷重新编码或丢失音视频相对偏移。
 """Phase 1 实际媒体集成测试；FFmpeg CLI 仅生成素材和独立验证，不执行被测 Remux。"""
 import argparse
 import hashlib

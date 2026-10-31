@@ -1,3 +1,4 @@
+// 用微秒PTS验证选帧、容量背压和close唤醒；测试线程必须join后才能读取非原子结果。
 #include "queue/frame_queue.h"
 #include <atomic>
 #include <iostream>
@@ -32,6 +33,7 @@ int main() {
     if (!backpressure || !accepted || !first || !end || current->pts != 80000 || queue.peak() != 2)
         return 1;
 
+    // 满队列上的生产者必须被close唤醒，否则析构join可能永久等待。
     esports::FrameQueue closing(1);
     closing.push(frame(0));
     bool rejected = false;

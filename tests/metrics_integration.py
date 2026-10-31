@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 除CSV字段外也验证真实输出及超时收尾；短跑指标不用于宣称长期无内存泄漏。
 """短负载检查指标语义、正常排空与指标文件保护，不替代长跑。"""
 import argparse
 from pathlib import Path

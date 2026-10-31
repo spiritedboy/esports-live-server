@@ -1,3 +1,7 @@
+/*
+ * 编码后独立录制支路，不重复编码。submit克隆包引用，工作线程负责分段封装和索引。
+ * 磁盘慢/写失败只关闭录制；直播继续。只有写尾成功的片段才登记索引。
+ */
 #include "recording/recorder.h"
 #include <cstdio>
 #include <cstdlib>
@@ -52,6 +56,7 @@ void Recorder::submit(const AVPacket* packet, AVRational tb) {
             lock.unlock(); fail("录制队列满，防止磁盘背压冻结直播"); return;
         }
         QueuedPacket item;
+        // 独立AVPacket外壳共享只读编码数据；两路封装会各改PTS/DTS，不能共用同一外壳。
         item.packet.reset(av_packet_clone(packet));
         if (!item.packet) throw std::bad_alloc();
         item.time_base = tb; item.bytes = size;
@@ -74,6 +79,8 @@ void Recorder::run() {
     unsigned segment = 0;
     std::string path;
     bool published = false;
+    // 先成功写尾再发布索引，防止把未完成的MP4当作可回放片段。
+    // 这不提供断电持久性保证；AAC边界也不保证采样级无缝。
     const auto finalize = [&] {
         if (!mux) return;
         mux->finish();
@@ -100,6 +107,7 @@ void Recorder::run() {
                 item = std::move(queue_.front()); queue_.pop_front(); bytes_ -= item.bytes;
             }
             const bool key = item.packet->stream_index == 0 && (item.packet->flags & AV_PKT_FLAG_KEY);
+            // 目标时长到达后等下一IDR才切段，让每段视频能独立解码；实际时长可能更长。
             if (mux && key && item.dts_us - origin >= int64_t(options_.segment_ms) * 1000) {
                 end = item.dts_us; // 索引使用互不重叠的半开节目区间。
                 finalize(); ++segment;

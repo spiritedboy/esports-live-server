@@ -1,3 +1,7 @@
+/*
+ * 最短媒体链路：StreamInput → 压缩AVPacket → StreamOutput，无解码重编码。
+ * 整条链路在调用线程执行，以DTS控制可选的实时发送节奏。
+ */
 #include "manager/remuxer.h"
 #include "input/stream_input.h"
 #include "output/stream_output.h"
@@ -46,10 +50,12 @@ int run_remux(const RemuxOptions& options, const volatile std::sig_atomic_t& sto
             const int64_t timestamp_limit = int64_t(1) << 60;
             if (dts_us <= -timestamp_limit || dts_us >= timestamp_limit)
                 throw std::runtime_error("输入 DTS 超出可处理范围");
+            // 只选一个共同原点，音视频各减自己的首PTS会抹掉原有轨道偏移。
             if (origin_us == AV_NOPTS_VALUE) {
                 origin_us = dts_us;
                 start_us = av_gettime_relative();
             }
+            // 文件读取远快于播放速度，按DTS相对原点限速；10ms分段等待便于及时响应停止。
             if (options.realtime) {
                 const int64_t media_elapsed = dts_us - origin_us;
                 while (!io.stopped()) {

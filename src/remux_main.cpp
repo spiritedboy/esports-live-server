@@ -1,3 +1,7 @@
+/*
+ * Phase 1入口：解析单路输入和输出参数，再交给run_remux转封装。
+ * 该程序不解码、不混音，也不具备完整直播程序的异步恢复策略。
+ */
 #include "manager/remuxer.h"
 #include <cerrno>
 #include <iostream>

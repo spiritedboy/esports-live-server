@@ -1,3 +1,4 @@
+// 分别检验实时模式的丢弃/IDR/代次失效，以及本地模式的阻塞和排空，二者策略不同。
 #include "queue/packet_queue.h"
 #include <thread>
 #include <atomic>
@@ -42,6 +43,7 @@ int main() {
         return 7;
     realtime.close();
 
+    // 本地输出优先保完整内容，即使DTS跨度大也不按网络延迟策略丢包。
     PacketQueue file(limits, false);
     file.push(item(true, true, 0)); file.push(item(false, false, 5000000));
     std::atomic<bool> finished(false);

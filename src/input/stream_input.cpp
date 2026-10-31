@@ -1,3 +1,7 @@
+/*
+ * 解复用边界：FFmpeg负责协议及容器解析，本类只返回压缩AVPacket。
+ * 一个实例归一个执行线程使用；AVFormatContext由本类关闭，IoControl是借用引用。
+ */
 #include "input/stream_input.h"
 
 namespace esports {
@@ -7,6 +11,7 @@ void StreamInput::open(const std::string& url, Logger& log) {
     if (context_) throw std::logic_error("输入已经打开");
     context_ = avformat_alloc_context();
     if (!context_) throw std::bad_alloc();
+    // 在open_input之前安装中断回调，让连接/探测/读包都能响应停止和截止时间。
     context_->interrupt_callback = io_.callback();
     AVDictionary* options = nullptr;
     if (starts_with(url, "rtsp://")) {
@@ -32,6 +37,7 @@ void StreamInput::open(const std::string& url, Logger& log) {
 }
 
 int StreamInput::read(AVPacket* packet) {
+    // 清掉上一次read留下的引用后复用外壳；需要保留旧包者必须先clone/ref或移动保存。
     av_packet_unref(packet);
     io_.arm();
     const int result = av_read_frame(context_, packet);

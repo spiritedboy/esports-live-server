@@ -1,3 +1,4 @@
+// 用RLIMIT_FSIZE触发录制EFBIG，同时通过管道保留直播支路；分流前摘要用于检查同次运行的数据完整性。
 #include "recording/recorder.h"
 #include "codec/media_codec.h"
 #include "mixer/audio_mixer.h"

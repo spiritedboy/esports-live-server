@@ -1,3 +1,4 @@
+// 以真实编码和封装配合可替换PacketSink注入输出故障；不能代替真实RTMP接收播放验收。
 #include "output/async_output.h"
 #include "codec/media_codec.h"
 #include "mixer/audio_mixer.h"

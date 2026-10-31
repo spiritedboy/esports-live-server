@@ -1,3 +1,7 @@
+/*
+ * 异步推流边界：主线程open/submit/check/finish，工作线程独占PacketSink。
+ * 工作线程异常保存在exception_ptr，由主线程check/finish重新抛出。
+ */
 #ifndef ESPORTS_OUTPUT_ASYNC_OUTPUT_H
 #define ESPORTS_OUTPUT_ASYNC_OUTPUT_H
 #include "queue/packet_queue.h"
@@ -33,6 +37,7 @@ public:
     AsyncOutput(const AsyncOutput&) = delete;
     AsyncOutput& operator=(const AsyncOutput&) = delete;
     void open(const std::string&, const std::vector<AVCodecContext*>&);
+    // 接管Packet；调用后原unique_ptr为空。网络可丢过期数据，本地队列满会背压等待。
     void submit(Packet, AVRational);
     bool take_keyframe_request() { return queue_.take_key_request(); }
     void reset_for_latency() { if (network_) queue_.reset(); }

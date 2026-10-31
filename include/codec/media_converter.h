@@ -1,3 +1,7 @@
+/*
+ * 单线程格式转换器。返回的Frame交给调用者持有，传入指针仅借用。
+ * AudioConverter借用已打开的目标编码器，编码器必须晚于转换器销毁。
+ */
 #ifndef ESPORTS_CODEC_MEDIA_CONVERTER_H
 #define ESPORTS_CODEC_MEDIA_CONVERTER_H
 #include "codec/media_codec.h"

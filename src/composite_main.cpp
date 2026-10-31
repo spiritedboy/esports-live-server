@@ -1,3 +1,7 @@
+/*
+ * Phase 3入口：配置2/4路视频合成和定时布局切换，仅输出视频。
+ * 音视频完整节目由esports_live负责；这里保留阶段实现以便逐步学习。
+ */
 #include "manager/compositor.h"
 #include <iostream>
 namespace {

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 包装器退出不等于所有后代停止；通过进程组和/proc验证超时清理与Ctrl+C路径。
 """确保测试超时不遗留包装器启动的子进程。Linux /proc检查。"""
 import os
 from pathlib import Path

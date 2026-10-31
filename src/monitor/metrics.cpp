@@ -1,3 +1,7 @@
+/*
+ * 采样进程及媒体指标并写CSV；由主处理线程调用。
+ * CPU为采样区间的进程CPU时间/墙钟时间，100%代表一个逻辑核，可超过100%。
+ */
 #include "monitor/metrics.h"
 #include <cerrno>
 #include <fcntl.h>
@@ -30,6 +34,7 @@ void MetricsFile::sample(const PipelineMetrics& data) {
     if (getrusage(RUSAGE_SELF, &usage)) throw std::runtime_error("读取进程CPU统计失败");
     const int64_t cpu = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * int64_t(1000000) +
                         usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
+    // VmRSS是当前驻留内存，ru_maxrss是进程历史峰值，单位均为KiB；读取失败保留-1。
     long rss = -1, threads = -1;
     std::ifstream status("/proc/self/status");
     std::string line;
@@ -40,6 +45,7 @@ void MetricsFile::sample(const PipelineMetrics& data) {
             if (key == "Threads:") threads = value;
         }
     }
+    // 输入FPS汇总所有视频源，输出FPS只有一路节目，比较时不要把两者当同一路帧率。
     uint64_t inputs = 0;
     for (auto n : data.video_frames) inputs += n;
     bool bad = std::fprintf(file_, "%lld,%.3f,%ld,%ld,%ld,%.3f,%.3f",

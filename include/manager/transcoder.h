@@ -1,3 +1,6 @@
+/*
+ * Phase 2在输入/输出配置上增加编码尺寸和名义帧率；保持单路媒体时间关系。
+ */
 #ifndef ESPORTS_MANAGER_TRANSCODER_H
 #define ESPORTS_MANAGER_TRANSCODER_H
 #include "manager/remuxer.h"

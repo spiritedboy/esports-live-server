@@ -1,3 +1,7 @@
+/*
+ * 编码包队列是直播延迟控制的边界：本地背压保数据，实时网络清旧窗口等新关键帧。
+ * epoch是缓存代次；出队后仍可能失效，消费者写入前必须再次核对。
+ */
 #ifndef ESPORTS_QUEUE_PACKET_QUEUE_H
 #define ESPORTS_QUEUE_PACKET_QUEUE_H
 #include "common/ffmpeg.h"
@@ -9,6 +13,7 @@ namespace esports {
 struct QueuedPacket {
     Packet packet;
     AVRational time_base{0, 1};
+    // dts_us属于媒体时间轴；queued_us属于单调墙钟，用来测真实排队耗时，不能相减混用。
     int64_t dts_us = 0, queued_us = 0;
     uint64_t epoch = 0;
     bool video = false;
@@ -108,6 +113,8 @@ private:
     void dropped_locked(const QueuedPacket& item) {
         if (item.video) ++stats_.dropped_video; else ++stats_.dropped_audio;
     }
+    // 整批丢弃并递增代次，使已被消费者拿走的旧包也失效。
+    // 不能只丢任意P帧后继续发：后续参考链可能已断，需要新的IDR重新开始。
     void reset_locked() {
         for (const auto& item : queue_) dropped_locked(item);
         queue_.clear();

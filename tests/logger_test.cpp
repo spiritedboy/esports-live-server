@@ -1,3 +1,4 @@
+// 并发写日志后检查记录完整性、等级过滤及换行转义，防止多线程消息交叉。
 #include "common/logger.h"
 
 #include <iostream>

@@ -1,3 +1,7 @@
+/*
+ * 封装与I/O边界：复制流参数 → 打开输出 → 写头 → 换算包时间戳并写入 → 写尾。
+ * 实例不跨线程并发使用；本地自定义AVIO用于排他创建文件，网络交给FFmpeg协议层。
+ */
 #include "output/stream_output.h"
 #include <cerrno>
 #include <fcntl.h>
@@ -13,6 +17,7 @@ extern "C" {
 namespace esports {
 StreamOutput::~StreamOutput() { close(); }
 
+// AVIO的C回调只能返回负错误码，不能让C++异常穿过FFmpeg。处理短写和EINTR后再返回。
 int StreamOutput::write_file(void* opaque, uint8_t* buffer, int size) {
     StreamOutput& self = *static_cast<StreamOutput*>(opaque);
     int written = 0;
@@ -127,6 +132,7 @@ void StreamOutput::open(const std::string& url, AVFormatContext* input, Logger& 
         const int result = av_dict_set(&mux_options, "flvflags", "no_duration_filesize", 0);
         if (result < 0) { av_dict_free(&mux_options); ff_check(result, "设置直播 FLV 标记"); }
     }
+    // 封装器写头时可能修改AVStream::time_base；真正写包时必须读取修改后的值。
     const int header_result = avformat_write_header(context_, &mux_options);
     av_dict_free(&mux_options);
     io_.check(header_result, "写入媒体头");
@@ -165,6 +171,8 @@ void StreamOutput::write(AVPacket* packet, AVRational input_time_base, int64_t o
     packet->stream_index = index;
     packet->pos = -1;
     io_.arm();
+    // 该API会消耗包的缓冲引用；即使失败也不拿同一包重试，调用方只负责释放外壳。
+    // 交织器可能暂存数据，写包成功后仍需检查AVIO错误，写尾时也可能才暴露失败。
     io_.check(av_interleaved_write_frame(context_, packet), "写入媒体包");
     if (context_->pb) {
         if (low_latency_) avio_flush(context_->pb);

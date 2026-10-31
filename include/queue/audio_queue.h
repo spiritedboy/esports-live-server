@@ -1,3 +1,7 @@
+/*
+ * 音频队列以采样窗口读取PCM，跨块拼接、裁掉窗口外数据；未覆盖位置保留预填静音。
+ * 所有队列状态受同一锁保护，条件变量等待会释放锁，close同时唤醒生产者和消费者。
+ */
 #ifndef ESPORTS_QUEUE_AUDIO_QUEUE_H
 #define ESPORTS_QUEUE_AUDIO_QUEUE_H
 #include "codec/media_codec.h"
@@ -29,6 +33,7 @@ public:
     bool read_window(AVFrame* target, int& filled, int wait_ms) {
         std::unique_lock<std::mutex> lock(mutex_);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
+        // 半开区间[start,end)，单位为采样。调用者需先把target清为静音，filled初始为0。
         const int64_t start = target->pts, end = start + target->nb_samples;
         while (true) {
             while (!frames_.empty()) {

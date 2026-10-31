@@ -1,3 +1,7 @@
+/*
+ * FFmpeg公共边界：错误转异常、AVPacket的RAII、可中断I/O及网络运行期。
+ * Packet拥有结构体及其缓冲引用；移动转移所有权，底层编码数据可由多个引用共享。
+ */
 #ifndef ESPORTS_COMMON_FFMPEG_H
 #define ESPORTS_COMMON_FFMPEG_H
 #include <csignal>
@@ -21,6 +25,7 @@ inline void ff_check(int result, const std::string& operation) {
     throw std::runtime_error(operation + "：" + error);
 }
 
+// av_packet_free同时unref缓冲并释放外壳；只想复用外壳时使用av_packet_unref。
 struct PacketDeleter {
     void operator()(AVPacket* packet) const { av_packet_free(&packet); }
 };
@@ -38,6 +43,8 @@ public:
         : signal_stop_(&stop), timeout_us_(static_cast<int64_t>(timeout_ms) * 1000) {}
     IoControl(const std::atomic<bool>& stop, int timeout_ms)
         : thread_stop_(&stop), timeout_us_(static_cast<int64_t>(timeout_ms) * 1000) {}
+    // 每次阻塞调用前重新设截止时间。写尾模式忽略停止标志，但仍保留超时。
+    // 回调借用this，IoControl必须覆盖整个FFmpeg I/O对象的生命周期。
     void arm(bool finishing = false) {
         finishing_ = finishing;
         deadline_ = av_gettime_relative() + timeout_us_;

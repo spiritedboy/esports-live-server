@@ -1,3 +1,7 @@
+/*
+ * 单个输出会话的封装器；复制流描述后不依赖原描述对象存活。
+ * finish用于报告写尾错误，析构只释放资源；调用者应显式完成finish。
+ */
 #ifndef ESPORTS_OUTPUT_STREAM_OUTPUT_H
 #define ESPORTS_OUTPUT_STREAM_OUTPUT_H
 #include "common/ffmpeg.h"

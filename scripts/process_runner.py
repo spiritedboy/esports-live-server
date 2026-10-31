@@ -13,6 +13,7 @@ def _signal_group(process, sig):
         pass
 
 
+# 忽略Z/X状态：它们已不再执行；此检查针对仍运行的同进程组后代，不是僵尸回收器。
 def _group_running(group):
     for path in Path('/proc').glob('[0-9]*/stat'):
         try:

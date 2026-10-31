@@ -1,3 +1,7 @@
+/*
+ * 仅视频的阶段流水线：输入线程产帧，调用线程按固定帧率选帧、合成、编码并输出。
+ * tick为输出帧序号；输入队列PTS以微秒表示，两者比较前必须换算。
+ */
 #include "manager/compositor.h"
 #include "input/video_source.h"
 #include "mixer/video_mixer.h"
@@ -60,6 +64,7 @@ int run_composite(const CompositeOptions& options, const volatile std::sig_atomi
         };
         const int64_t wall_start = av_gettime_relative();
         bool switched = false;
+        // 输出CFR时钟：每次tick只产生一帧；源帧率不足时复用，多余时按时间选最新帧。
         for (int64_t tick = 0; !stop; ++tick) {
             const int64_t us = av_rescale_q(tick, AVRational{1, options.fps}, AVRational{1, AV_TIME_BASE});
             if (options.duration_ms && us >= int64_t(options.duration_ms) * 1000) break;
@@ -85,6 +90,7 @@ int run_composite(const CompositeOptions& options, const volatile std::sig_atomi
                 }
                 exhausted = exhausted && queue.exhausted();
                 if (current[i]) last_end = std::max(last_end, current[i]->pts + current[i]->duration);
+                // 源关闭不立刻丢最近画面，超过stale_ms才黑帧，避免短暂缺帧造成闪黑。
                 const bool fresh = current[i] && us - current[i]->pts <= int64_t(options.stale_ms) * 1000;
                 selected.push_back(fresh ? current[i].get() : black.get());
             }

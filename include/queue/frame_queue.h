@@ -1,3 +1,7 @@
+/*
+ * 视频队列连接输入线程与节目调度线程；有界容量让快生产者等待慢消费者。
+ * 选帧按节目微秒时间，而不是按入队顺序每次只取一帧。
+ */
 #ifndef ESPORTS_QUEUE_FRAME_QUEUE_H
 #define ESPORTS_QUEUE_FRAME_QUEUE_H
 #include "codec/media_codec.h"
@@ -27,6 +31,7 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms);
         while (true) {
             while (!frames_.empty() && frames_.front()->pts <= tick) {
+                // 一次消费所有不晚于tick的帧，只保留最新一张；被替换帧由RAII释放。
                 current = std::move(frames_.front());
                 frames_.pop_front();
                 writable_.notify_one();

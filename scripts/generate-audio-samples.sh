@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # AAC 游戏声和 Opus 解说声的可复现测试素材。
 set -euo pipefail
+# 两种频率便于用频谱区分各路贡献，44.1kHz与48kHz输入用于验证重采样。
 directory="${1:-build/samples/audio}"
 mkdir -p -- "$directory"
 ffmpeg -hide_banner -loglevel error -n \

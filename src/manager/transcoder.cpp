@@ -1,3 +1,7 @@
+/*
+ * 单路线程内转码链路：解码回调 → 格式转换回调 → 编码回调 → 封装。
+ * 这些回调是同步函数调用，并非各自启动线程；EOF按数据流方向逐层排空。
+ */
 #include "manager/transcoder.h"
 #include "input/stream_input.h"
 #include "output/stream_output.h"
@@ -50,6 +54,7 @@ int run_transcode(const TranscodeOptions& options, const volatile std::sig_atomi
         int64_t pacing_origin = AV_NOPTS_VALUE;
         int64_t wall_origin = 0;
         int64_t previous_video = AV_NOPTS_VALUE;
+        // 所有解码帧先换算成共同原点下的微秒；视频/音频随后各转到自己的编码time_base。
         const auto normalized = [&](const AVFrame* frame, int index) {
             if (frame->pts == AV_NOPTS_VALUE) throw std::runtime_error("解码帧缺少 PTS");
             const int64_t us = av_rescale_q(frame->pts, format->streams[index]->time_base,
@@ -73,6 +78,8 @@ int run_transcode(const TranscodeOptions& options, const volatile std::sig_atomi
             }
             return pts;
         };
+        // 回调从下游向上游组装：先定义包输出，再定义编码输入，最后接到解码器。
+        // 这些引用捕获只在当前函数存活期间同步调用。
         const PacketConsumer video_packet = [&](Packet packet) {
             packet->stream_index = video_output;
             output.write(packet.get(), video_encoder.context()->time_base, 0);
@@ -129,6 +136,7 @@ int run_transcode(const TranscodeOptions& options, const volatile std::sig_atomi
             }
             if (audio_index >= 0) {
                 audio_decoder.send(nullptr, audio_frame);
+                // 先排出重采样延迟和FIFO剩余PCM，再排空AAC编码器；倒过来会丢失最后的声音。
                 audio_converter->finish(audio_ready);
                 audio_encoder.send(nullptr, audio_packet);
             }

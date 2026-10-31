@@ -28,6 +28,7 @@ root.mkdir(parents=True, exist_ok=False)
 program = str(Path(a.program).resolve())
 def run(command, **kwargs):
     return run_checked(command, **kwargs)
+# 素材比测量时长多1秒，避免尾部EOF后用黑帧/静音凑出表面正常的压力测试。
 source = root / 'source.mp4'
 with (root/'generation.log').open('w') as log:
     run([a.ffmpeg, '-v', 'warning', '-f', 'lavfi', '-i',
@@ -35,6 +36,7 @@ with (root/'generation.log').open('w') as log:
          'sine=frequency=440:sample_rate=48000', '-t', a.seconds+1,
          '-c:v', 'libx264', '-preset', 'ultrafast', '-threads', '2', '-crf', '28',
          '-c:a', 'aac', source], stdout=log, stderr=log, timeout=max(60, a.seconds*10))
+# 同一素材打开4个独立解码会话以产生负载；并不模拟4台设备的网络与独立时钟。
 command = [program] + ['--input', str(source)]*4 + [
     '--layout', 'grid', '--width', str(a.width), '--height', str(a.height), '--fps', str(a.fps),
     '--duration-ms', str(a.seconds*1000), '--output', str(root/'live.flv'),
@@ -44,6 +46,7 @@ command = [program] + ['--input', str(source)]*4 + [
 if a.perf:
     command = ['perf', 'record', '-e', 'cpu-clock', '-F', '99', '--call-graph', 'dwarf',
                '-o', str(root/'perf.data'), '--'] + command
+# 测量区间只覆盖节目进程，排除素材生成和事后解码校验。
 start = time.monotonic()
 with (root/'run.log').open('w') as log:
     run(command, stdout=log, stderr=log, timeout=a.seconds*3+30)

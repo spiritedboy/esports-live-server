@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(EsportsLiveServer VERSION 0.1.0 LANGUAGES CXX)
 
+# 禁用编译器扩展并强制C++11，避免本机编过但换环境后依赖更新的语言特性。
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(PkgConfig REQUIRED)
+# 通过导入目标传递FFmpeg头文件和链接参数，不硬编码本机库路径。
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavformat libavcodec libavutil libavfilter libswresample libswscale)
 find_package(Threads REQUIRED)
@@ -21,6 +23,7 @@ target_link_libraries(esports_common PUBLIC Threads::Threads project_options)
 add_executable(ffmpeg_env_check src/main.cpp)
 target_link_libraries(ffmpeg_env_check PRIVATE esports_common PkgConfig::FFMPEG)
 
+# 核心媒体库供各阶段可执行程序复用；main只组装参数，媒体处理不依赖命令行工具。
 add_library(esports_media
     src/input/stream_input.cpp
     src/output/stream_output.cpp

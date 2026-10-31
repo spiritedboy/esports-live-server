@@ -1,3 +1,7 @@
+/*
+ * 混音要求输入均为48kHz/双声道/FLTP且覆盖同一PTS与采样数。
+ * 增益为线性幅度，不是分贝；set_gain和set_muted也由混音线程调用。
+ */
 #ifndef ESPORTS_MIXER_AUDIO_MIXER_H
 #define ESPORTS_MIXER_AUDIO_MIXER_H
 #include "codec/media_codec.h"
