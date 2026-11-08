@@ -11,7 +11,8 @@
 | esports_replay | 录像关键帧查询、片段提取、实时回放 | src/replay_main.cpp |
 | ffmpeg_env_check | FFmpeg六库版本与注册能力诊断 | src/env_check_main.cpp |
 
-阅读源码先看[阅读路线](docs/code-reading-guide.md)，再看[当前架构](docs/architecture.md)。
+阅读源码先看[完整代码阅读指南](docs/code-reading-guide.md)：逐项解释全部46个头文件/实现文件（含测试和第三方头文件），
+并提供调用图、视频/音频追踪、时间戳实例、线程所有权和GDB观察点；系统概览见[当前架构](docs/architecture.md)。
 完整节目只有一个调度入口：src/manager/live_pipeline.cpp。LiveOptions独立定义，不再继承阶段配置。
 已删除早期独立转封装、单路转码、纯视频演示入口及专用实现；历史版本可通过Git查看。
 
