@@ -44,23 +44,6 @@ int64_t StreamOutput::seek_file(void* opaque, int64_t offset, int whence) {
     return result < 0 ? AVERROR(errno) : result;
 }
 
-void StreamOutput::open_encoded(const std::string& url,
-                               const std::vector<AVCodecContext*>& codecs, Logger& log) {
-    // 仅存放已打开编码器的流描述，复用现有封装和文件保护逻辑。
-    struct FormatDeleter {
-        void operator()(AVFormatContext* c) const { avformat_free_context(c); }
-    };
-    std::unique_ptr<AVFormatContext, FormatDeleter> description(avformat_alloc_context());
-    if (!description) throw std::bad_alloc();
-    for (const auto* codec : codecs) {
-        AVStream* stream = avformat_new_stream(description.get(), nullptr);
-        if (!stream) throw std::bad_alloc();
-        ff_check(avcodec_parameters_from_context(stream->codecpar, codec), "复制编码参数");
-        stream->time_base = codec->time_base;
-    }
-    open(url, description.get(), log);
-}
-
 void StreamOutput::open(const std::string& url, AVFormatContext* input, Logger& log) {
     if (context_) throw std::logic_error("输出已经打开");
     if (format_ != "flv" && format_ != "mp4" && format_ != "matroska")
@@ -87,10 +70,10 @@ void StreamOutput::open(const std::string& url, AVFormatContext* input, Logger& 
              parameters->codec_id != AV_CODEC_ID_H264) ||
             (parameters->codec_type == AVMEDIA_TYPE_AUDIO &&
              parameters->codec_id != AV_CODEC_ID_AAC)) {
-            throw std::runtime_error("不兼容编码：Phase 1 仅允许 H.264/AAC Remux");
+            throw std::runtime_error("不兼容编码：输出仅支持 H.264/AAC");
         }
         bool& found = parameters->codec_type == AVMEDIA_TYPE_VIDEO ? video : audio;
-        if (found) throw std::runtime_error("Phase 1 每种媒体仅允许一路流");
+        if (found) throw std::runtime_error("每种输出媒体仅允许一路流");
         found = true;
         if (source->time_base.num <= 0 || source->time_base.den <= 0)
             throw std::runtime_error("输入 time_base 无效");

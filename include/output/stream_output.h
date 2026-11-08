@@ -20,7 +20,6 @@ public:
     StreamOutput(const StreamOutput&) = delete;
     StreamOutput& operator=(const StreamOutput&) = delete;
     void open(const std::string& url, AVFormatContext* input, Logger& log);
-    void open_encoded(const std::string& url, const std::vector<AVCodecContext*>& codecs, Logger& log);
     bool selected(int input_index) const;
     // packet 归调用者持有；写入会消耗其缓冲引用，失败也不能重用原包。
     void write(AVPacket* packet, AVRational input_time_base, int64_t origin_us);

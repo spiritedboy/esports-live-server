@@ -1,7 +1,7 @@
 # esports_live 配置说明
 
 自2026-10-30起，config/server.json是实际可加载的配置文件。
-仅esports_live支持--config；历史阶段的remux/transcode/composite以及独立replay命令仍使用各自命令行。
+仅esports_live支持--config；独立esports_replay使用自己的命令行参数。
 不指定--config时保留原来的纯命令行行为，不会自动搜索或加载文件。
 
 ## 启动与检查

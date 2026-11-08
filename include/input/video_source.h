@@ -11,7 +11,7 @@
 namespace esports {
 class VideoSource {
 public:
-    VideoSource(const std::string& url, int width, int height, int timeout_ms, Logger& log, bool common_origin = false, int offset_ms = 0, size_t queue_frames = 8);
+    VideoSource(const std::string& url, int width, int height, int timeout_ms, Logger& log, int offset_ms = 0, size_t queue_frames = 4);
     ~VideoSource();
     VideoSource(const VideoSource&) = delete;
     VideoSource& operator=(const VideoSource&) = delete;
@@ -22,7 +22,7 @@ public:
     FrameQueue& queue() { return queue_; }
     bool failed() const { return failed_.load(); }
 private:
-    void run(std::string url, int width, int height, int timeout_ms, Logger& log, bool common_origin, int offset_ms);
+    void run(std::string url, int width, int height, int timeout_ms, Logger& log, int offset_ms);
     std::atomic<bool> stop_{false};
     std::atomic<bool> failed_{false};
     FrameQueue queue_;

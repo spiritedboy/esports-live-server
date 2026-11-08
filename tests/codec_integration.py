@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # 使用真实解码与尾帧计数检查排空；重编码后字节通常不同，不能照搬Remux压缩包哈希判据。
-"""Phase 2：真实编解码、格式转换和排空验证。"""
+"""完整直播：真实编解码、格式转换和排空验证。"""
 import argparse
+import csv
 import json
 from pathlib import Path
 import signal
@@ -38,12 +39,18 @@ def probe(path):
 
 
 def convert(source, target, *options, expected=0):
-    return run([a.program, "--input", source, "--output", target,
-                "--no-realtime", *options], expected)
+    metrics = ["--metrics-file", str(target)+".csv"] if expected == 0 else []
+    return run([a.program, "--input", source, "--input", source, "--duration-ms", "2120", "--output", target,
+                "--no-realtime", *metrics, *options], expected)
 
 
 def validate(path, count, audio=True):
     data = probe(path)
+    # 节目调度可能复用最后一帧；还要检查每个解码器实际产帧数，才能发现B帧尾部未排空。
+    with Path(str(path)+".csv").open() as metrics:
+        last = list(csv.DictReader(metrics))[-1]
+    check(int(last["v0_frames"]) == count and int(last["v1_frames"]) == count,
+          "输入解码尾帧缺失，不能用节目重复帧掩盖")
     video = next(s for s in data["streams"] if s["codec_type"] == "video")
     check(video["codec_name"] == "h264" and video["pix_fmt"] == "yuv420p", "视频输出格式错误")
     check((video["width"], video["height"]) == (640, 360), "尺寸错误")
@@ -86,36 +93,20 @@ with tempfile.TemporaryDirectory(dir=a.work, prefix="codec-") as directory:
        "-t", "1.08", "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
        "-x265-params", "pools=1:frame-threads=1:log-level=error", hevc)
     hevc_out = root / "hevc.flv"
-    convert(hevc, hevc_out)
-    validate(hevc_out, 27, audio=False)
+    convert(hevc, hevc_out, "--duration-ms", "1080")
+    validate(hevc_out, 27)
     print("通过：H.265 10-bit 解码、8-bit 像素转换、H.264 编码，27/27 帧")
 
-    offset = root / "offset.mp4"
-    ff("-i", source, "-itsoffset", "0.3", "-i", source,
-       "-map", "0:v", "-map", "1:a", "-c", "copy", offset)
-    offset_out = root / "offset.flv"
-    convert(offset, offset_out)
-    offset_data = validate(offset_out, 53)
-    starts = {s["codec_type"]: float(s["start_time"]) for s in offset_data["streams"]}
-    check(.24 < starts["audio"] - starts["video"] < .34, "音频偏移被重置")
-    print("通过：300ms 音频起点偏移保留")
-
-    audio_only = root / "audio.m4a"
-    ff("-i", source, "-vn", "-c:a", "copy", audio_only)
-    only_out = root / "audio.flv"
-    convert(audio_only, only_out)
-    check(len(probe(only_out)["streams"]) == 1, "单音轨转码失败")
-    ff("-xerror", "-i", only_out, "-f", "null", "-")
-
+    # 独立源内容偏移由live_integration验证；完整节目即使无输入音轨也输出静音AAC。
     digest = out.read_bytes()
     convert(source, out, expected=1)
     check(out.read_bytes() == digest, "覆盖旧输出")
     convert(source, root / "bad-size.flv", "--width", "321", expected=1)
     convert(root / "missing", root / "missing.flv", expected=1)
-    print("通过：单音轨、输出保护、无效尺寸及缺失输入")
+    print("通过：输出保护、无效尺寸及缺失输入")
 
     partial = root / "partial.flv"
-    proc = subprocess.Popen([a.program, "--input", str(source), "--output", str(partial)],
+    proc = subprocess.Popen([a.program, "--input", str(source), "--input", str(source), "--output", str(partial)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         time.sleep(.6)

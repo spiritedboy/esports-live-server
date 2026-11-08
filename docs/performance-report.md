@@ -1,5 +1,10 @@
 # 工程与媒体测试记录
 
+> 当前源码已于2026-11-09收敛为完整直播、独立回放和环境诊断三个入口。
+> 本文保留有日期的开发历史；旧阶段代码/命令不再作为当前入口。
+> 当前使用与结构见[README](../README.md)、[架构](architecture.md)和[阅读路线](code-reading-guide.md)。
+
+
 ## Phase 0 历史记录
 
 日期：2026-10-29（Asia/Shanghai）。
@@ -577,3 +582,28 @@ Python AST比较一致，Shell语法检查、阅读指南链接检查及git diff
 
 本轮未重复ASan/UBSan或压力测试；未运行真实网络验收，也不把文档维护视为新增媒体能力。
 此前长期稳定性、真实设备/网络等未验收项仍然保留。未进行Git提交。
+
+## 2026-11-09：交付代码收敛验证
+
+删除旧阶段独立程序及专用管理器，LiveOptions解除阶段类型继承，视频输入仅保留完整节目共同原点模式，
+移除重复音频转换器及未使用的open_encoded，视频转换文件改名为video_converter，环境入口改为env_check_main。
+
+测试迁移说明：旧Remux产品专属包透传断言不再适用；其输入拒绝、握手超时和停止能力迁到
+input_integration。旧转码/合成测试迁成codec_integration与video_layout_integration，直接调用esports_live。
+编解码测试除检查输出帧数，还核对每路解码计数，防止节目重复帧掩盖B帧尾部未排空。
+布局测试明确2秒节目长度，继续严格检查40帧及四色像素，原因见学习笔记。
+
+| 验证 | 真实结果 | 日志 |
+|---|---|---|
+| Debug配置/构建 | 成功，无编译警告 | build/consolidation-check/debug-config.log、debug-build.log |
+| Release配置/构建 | 成功，无编译警告 | build/consolidation-check/release-config.log、release-build.log |
+| Debug CTest | 16/16通过，28.16秒 | build/consolidation-check/debug-tests.log |
+| Release CTest | 16/16通过，28.08秒 | build/consolidation-check/release-tests.log |
+| ASan/UBSan配置/构建及CTest | 构建成功，16/16通过，32.33秒，覆盖路径未报告内存/未定义行为错误 | asan-config.log、asan-build.log、asan-tests.log |
+| 编解码测试最终修订 | Debug/Release各1/1通过；输出保护场景关闭CSV，确保验证媒体路径冲突 | debug-codec-final.log、release-codec-final.log |
+| 无测试依赖的全新Release构建与安装 | BUILD_TESTING=OFF成功，bin恰含live/replay/env_check三个工具 | production-build.log、install.log |
+| 安装后实际运行 | 三份配置校验成功；3秒节目75帧H.264/142帧AAC，录制后提取MKV；FLV/MKV完整解码成功 | delivery-check.log及installed-run-bsljzhzk目录 |
+
+上述相对日志名均位于build/consolidation-check。本轮未做真实网络成功会话和长期压力验收。
+已删除build/debug、release、asan根目录中旧三程序的ELF产物，未清除历史素材和测试报告。
+历史报告中的阶段程序/路径属于当时记录，不再作为当前运行指引。

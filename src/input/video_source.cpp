@@ -4,14 +4,14 @@
  */
 #include "input/video_source.h"
 #include "input/stream_input.h"
-#include "codec/media_converter.h"
+#include "codec/video_converter.h"
 #include "sync/av_synchronizer.h"
 #include <chrono>
 #include <cerrno>
 #include <pthread.h>
 #include <sys/stat.h>
 namespace esports {
-VideoSource::VideoSource(const std::string& url, int width, int height, int timeout_ms, Logger& log, bool common_origin, int offset_ms, size_t queue_frames)
+VideoSource::VideoSource(const std::string& url, int width, int height, int timeout_ms, Logger& log, int offset_ms, size_t queue_frames)
     : queue_(queue_frames) {
     // 子线程继承阻塞掩码，确保 SIGINT/SIGTERM 只在主线程处理。
     sigset_t blocked, previous;
@@ -21,7 +21,7 @@ VideoSource::VideoSource(const std::string& url, int width, int height, int time
     const int result = pthread_sigmask(SIG_BLOCK, &blocked, &previous);
     if (result != 0) ff_check(AVERROR(result), "屏蔽工作线程信号");
     try {
-        worker_ = std::thread(&VideoSource::run, this, url, width, height, timeout_ms, std::ref(log), common_origin, offset_ms);
+        worker_ = std::thread(&VideoSource::run, this, url, width, height, timeout_ms, std::ref(log), offset_ms);
     } catch (...) {
         pthread_sigmask(SIG_SETMASK, &previous, nullptr);
         throw;
@@ -31,7 +31,7 @@ VideoSource::VideoSource(const std::string& url, int width, int height, int time
 VideoSource::~VideoSource() { stop(); join(); }
 void VideoSource::stop() { stop_.store(true); queue_.close(); }
 void VideoSource::join() { if (worker_.joinable()) worker_.join(); }
-void VideoSource::run(std::string url, int width, int height, int timeout_ms, Logger& log, bool common_origin, int offset_ms) {
+void VideoSource::run(std::string url, int width, int height, int timeout_ms, Logger& log, int offset_ms) {
     try {
         IoControl io(stop_, timeout_ms);
         StreamInput input(io);
@@ -57,8 +57,8 @@ void VideoSource::run(std::string url, int width, int height, int timeout_ms, Lo
         const AVRational rate = av_guess_frame_rate(format, stream, nullptr);
         if (rate.num <= 0 || rate.den <= 0) throw std::runtime_error("无法确定源帧率");
         const int64_t default_duration = av_rescale_q(1, av_inv_q(rate), AVRational{1, AV_TIME_BASE});
-        // 完整直播使用容器共同原点保留轨道偏移；早期纯视频合成用首视频帧作为原点。
-        int64_t origin = common_origin ? container_origin_us(format) : AV_NOPTS_VALUE;
+        // 使用容器共同原点保留轨道偏移，容器无起点时才回退到首帧。
+        int64_t origin = container_origin_us(format);
         int64_t previous = AV_NOPTS_VALUE;
         SourceClock clock(AV_TIME_BASE);
         const FrameConsumer consume = [&](Frame frame) {
@@ -73,12 +73,8 @@ void VideoSource::run(std::string url, int width, int height, int timeout_ms, Lo
                     throw std::runtime_error("合成源起点超出范围");
                 pts = timestamp - origin + int64_t(offset_ms) * 1000;
             }
-            if (common_origin) {
-                pts = clock.map(pts, default_duration);
-                if (previous != AV_NOPTS_VALUE && pts <= previous) return;
-            } else if (pts == AV_NOPTS_VALUE || (previous != AV_NOPTS_VALUE && pts <= previous)) {
-                throw std::runtime_error("合成源 PTS 缺失或不递增");
-            }
+            pts = clock.map(pts, default_duration);
+            if (previous != AV_NOPTS_VALUE && pts <= previous) return;
             previous = pts;
             Frame converted = converter.convert(frame.get(), width, height);
             converted->pts = pts;
@@ -111,8 +107,7 @@ void VideoSource::run(std::string url, int width, int height, int timeout_ms, Lo
                 decoder.send(packet.get(), consume);
             }
         }
-        if (common_origin)
-            log.log(LogLevel::Info, "视频时间轴重建=" + std::to_string(clock.resets()) +
+        log.log(LogLevel::Info, "视频时间轴重建=" + std::to_string(clock.resets()) +
                     "，缺失PTS=" + std::to_string(clock.missing()));
     } catch (const std::exception& error) {
         if (!stop_) {

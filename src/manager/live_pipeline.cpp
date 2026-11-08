@@ -100,7 +100,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         group.audios.reserve(options.audio_inputs.size());
         for (size_t i = 0; i < options.inputs.size(); ++i)
             group.videos.emplace_back(new VideoSource(options.inputs[i], options.width,
-                options.height, options.timeout_ms, log, true, options.video_offsets[i], options.video_queue_frames));
+                options.height, options.timeout_ms, log, options.video_offsets[i], options.video_queue_frames));
         for (size_t i = 0; i < options.audio_inputs.size(); ++i) {
             group.audios.emplace_back(new AudioSource(options.audio_inputs[i], options.timeout_ms,
                                                       options.audio_offsets[i], log, options.audio_queue_blocks));

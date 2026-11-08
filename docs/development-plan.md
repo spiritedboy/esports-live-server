@@ -1,5 +1,10 @@
 # Esports Live Server 项目开发计划书
 
+> 当前源码已于2026-11-09收敛为完整直播、独立回放和环境诊断三个入口。
+> 本文保留有日期的开发历史；旧阶段代码/命令不再作为当前入口。
+> 当前使用与结构见[README](../README.md)、[架构](architecture.md)和[阅读路线](code-reading-guide.md)。
+
+
 **项目名称：** Esports Live Server  
 **项目定位：** 基于 Linux/C++11/FFmpeg 的电竞赛事多路音视频实时制作与 RTMP 直播服务器  
 **开发语言：** C++11  
@@ -9,7 +14,7 @@
 **音视频核心：** FFmpeg C API  
 **文档语言：** 中文
 
-**当前进度（2026-10-30）：** 已按继续指示进入 Phase 7，完成监控、采样和短时压力测试实现；真实 RTMP、人工视听、24小时与长期稳定性验收仍未完成。
+**当前进度（2026-11-09）：** 按用户要求收敛交付代码，删除旧阶段演示入口；完整直播、回放和诊断保留。真实RTMP、人工视听、24小时与长期稳定性验收仍未完成。
 
 ---
 
@@ -901,7 +906,9 @@ esports-live-server/
 │   ├── output/
 │   └── manager/
 ├── src/
-│   ├── main.cpp
+│   ├── live_main.cpp
+│   ├── replay_main.cpp
+│   ├── env_check_main.cpp
 │   ├── common/
 │   ├── input/
 │   ├── codec/
@@ -1244,3 +1251,15 @@ Codex 在本项目中承担：
 
 本次属于现有实现的可读性维护，未改媒体处理逻辑或配置接口，未新增阶段，未提交Git。
 编译与回归结果见performance-report.md；此前未验收项继续保留。
+
+## 2026-11-09 交付代码收敛
+
+- 删除旧转封装、单路转码、纯视频合成入口和管理器，以及未被最终流程使用的AudioConverter/open_encoded。
+- LiveOptions独立定义；VideoSource只保留共同原点时间轴，视频转换器明确命名为VideoConverter。
+- 编解码与布局测试迁到esports_live；输入拒绝/超时/停止路径单独验证，保留有价值的覆盖。
+- README、架构、阅读路线和VSCode统一为当前程序；历史阶段记录仅保留作追溯。
+- CMake安装仅交付三个工具及示例配置；测试夹具不安装。
+
+本次由用户明确要求收敛现有代码，不开发新阶段，不部署服务器。验证结果见测试报告最新记录。
+
+本次Debug/Release/ASan+UBSan均16/16通过；独立Release安装后的直播、录制和提取解码通过。未提交Git。

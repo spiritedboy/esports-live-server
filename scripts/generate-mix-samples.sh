@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 只生成合成测试素材，实际合成由 esports_composite 完成。
+# 只生成合成测试素材，实际合成由 esports_live 完成。
 set -euo pipefail
 directory="${1:-build/samples/mix}"
 mkdir -p -- "$directory"

@@ -1,6 +1,6 @@
 # 代码阅读路线
 
-本文对应2026-10-31的实现。先读一条完整数据流，再深入各模块；不用一开始就逐行读完参数解析和CSV格式化。
+本文对应2026-11-09的实现。先读一条完整数据流，再深入各模块；不用一开始就逐行读完参数解析和CSV格式化。
 
 ## 1. 从哪个入口看
 
@@ -9,15 +9,16 @@
 [src/manager/live_pipeline.cpp](../src/manager/live_pipeline.cpp)中的`run_live`。
 `--check-config`和`--dump-config`在调用流水线之前退出，不打开媒体。
 
-`src/main.cpp`仅是环境检测入口，不是直播主程序。早期程序仍保留为独立学习路径：
+当前只有三个运行入口：
 
-| 程序 | 入口 → 核心实现 | 适合先理解什么 |
+| 程序 | 入口 → 核心实现 | 用途 |
 |---|---|---|
-| esports_remux | remux_main.cpp → manager/remuxer.cpp | 读包、时间基换算、转封装 |
-| esports_transcode | transcode_main.cpp → manager/transcoder.cpp | 解码、转换、编码以及EOF排空 |
-| esports_composite | composite_main.cpp → manager/compositor.cpp | 输入线程、选帧和视频合成 |
-| esports_live | live_main.cpp → manager/live_pipeline.cpp | 完整音视频节目与异步输出 |
-| esports_replay | replay_main.cpp | 关键帧定位、片段提取与实时回放 |
+| esports_live | live_main.cpp → manager/live_pipeline.cpp | 完整音视频节目 |
+| esports_replay | replay_main.cpp → StreamInput/StreamOutput | 关键帧定位与回放 |
+| ffmpeg_env_check | env_check_main.cpp | 开发库及注册能力诊断 |
+
+LiveOptions直接包含节目所需参数。早期演示入口、阶段配置继承链和重复AudioConverter已移除，
+音频统一使用AudioResampler。视频转换位于codec/video_converter.cpp。
 
 ## 2. 顺着主直播循环看
 

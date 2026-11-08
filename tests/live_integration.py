@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 从解码PCM/视频内容测混音与对齐，避免只比较容器时间戳而漏掉真实内容偏移。
-"""Phase 4：解码后波形/频谱、内容音画对齐、同步报告、故障退出验证。"""
+"""完整程序：解码后波形/频谱、内容音画对齐、同步报告、故障退出验证。"""
 import argparse
 import array
 import csv

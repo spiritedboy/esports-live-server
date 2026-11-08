@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FFmpeg 命令行仅生成测试素材，核心 Remux 由 esports_remux 执行。
+# FFmpeg 命令行仅生成测试素材，核心媒体处理由 esports_live 执行。
 set -euo pipefail
 output="${1:-build/samples/input.mp4}"
 mkdir -p -- "$(dirname -- "$output")"

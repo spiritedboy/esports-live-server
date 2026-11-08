@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 把可注入传输故障与真实客户端连接失败分开验证，无响应TCP端口不是媒体服务端。
-"""Phase 5：真实编码/封装故障注入，以及实际 RTMP 客户端失败路径；不部署 RTMP 服务端。"""
+"""完整程序：真实编码/封装故障注入，以及实际 RTMP 客户端失败路径；不部署 RTMP 服务端。"""
 import argparse
 import csv
 import json

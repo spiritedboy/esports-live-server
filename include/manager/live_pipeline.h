@@ -1,14 +1,24 @@
 /*
- * 完整节目配置：沿用视频合成参数，增加独立音频、输出恢复、录制及监控。
+ * 完整节目配置：包含视频合成、独立音频、输出恢复、录制及监控。
  * 入口校验后各逐路数组与最终源列表对齐；不要在运行期间并发修改这些选项。
  */
 #ifndef ESPORTS_MANAGER_LIVE_PIPELINE_H
 #define ESPORTS_MANAGER_LIVE_PIPELINE_H
-#include "manager/compositor.h"
+#include "common/logger.h"
+#include <vector>
 #include "output/async_output.h"
 #include "recording/recorder.h"
 namespace esports {
-struct LiveOptions : CompositeOptions {
+struct LiveOptions {
+    std::vector<std::string> inputs;
+    std::string output;
+    bool realtime = true;
+    int timeout_ms = 5000;
+    int width = 640, height = 360, fps = 25;
+    std::string layout = "split", switch_layout;
+    int switch_at_ms = -1; // -1：不安排布局切换。
+    int duration_ms = 0; // 0：运行至全部源结束或用户停止。
+    int stale_ms = 500;
     // 音频可以独立于视频列表，gains/muted/audio_offsets按音频索引，video_offsets按视频索引。
     std::vector<std::string> audio_inputs;
     std::vector<double> gains;
