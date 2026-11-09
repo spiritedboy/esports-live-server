@@ -1,3 +1,12 @@
+/*
+ * 初学者导读
+ * 这是故障注入辅助程序：真实 H.264/AAC 编码和 FLV 封装，传输边界替换成 FaultSink。
+ * 测试 URL 只是占位，实际输出到调用者指定目录；本测试不证明真实 RTMP 服务连接成功。
+ * FaultSink 依次制造慢握手、写失败、慢写，并检查每个会话从新关键帧和共同原点开始。
+ * 写失败前主动 unref，模拟 FFmpeg 已消费包引用，防止恢复代码错误重发原包。
+ * RefuseSink 一直拒绝连接，用来测试可取消退避和 EOF 时恢复失败不能误报成功。
+ * 外层 Python 集成测试还会检查这些实际文件；单看会话计数不能证明媒体可解码。
+ */
 // 以真实编码和封装配合可替换PacketSink注入输出故障；不能代替真实RTMP接收播放验收。
 #include "output/async_output.h"
 #include "codec/media_codec.h"
@@ -10,10 +19,12 @@ extern "C" {
 #include <libavutil/imgutils.h>
 }
 namespace {
+// 多个会话共享测试统计；opens/violations 由工作线程更新，主线程可安全读取原子值。
 struct FaultState {
     std::atomic<int> opens{0}, violations{0};
     std::string directory;
 };
+// 替换传输边界但保留真实 StreamOutput；每个会话写独立新文件，便于外层逐个解码验收。
 class FaultSink : public esports::PacketSink {
 public:
     FaultSink(esports::IoControl& io, FaultState& state)
@@ -42,6 +53,7 @@ private:
     FaultState& state_;
     int id_, writes_ = 0;
 };
+// 始终连接失败的最小测试实现；write 不应被调用，若调用说明输出状态机越过了失败的 open。
 class RefuseSink : public esports::PacketSink {
 public:
     void open(const std::string&, AVFormatContext*, esports::Logger&) override {
@@ -75,6 +87,7 @@ int main(int argc, char** argv) {
         output.open("rtmp://test-only/live", {video.context(), audio.context()});
         const PacketConsumer vp = [&](Packet p) { p->stream_index = 0; output.submit(std::move(p), video.context()->time_base); };
         const PacketConsumer ap = [&](Packet p) { p->stream_index = 1; output.submit(std::move(p), audio.context()->time_base); };
+        // 用 25fps 视频与 48kHz 音频生成节目：每视频周期对应 1920 采样，AAC 仍按 1024 分块。
         int64_t cursor = 0;
         for (int tick = 0; tick < 250; ++tick) {
             Frame frame = make_frame();
@@ -126,6 +139,7 @@ int main(int argc, char** argv) {
         cancelled.cancel(); cancelled.finish();
         if (av_gettime_relative() - start > 500000) throw std::runtime_error("退避取消过慢");
 
+        // 最后关闭输入但始终无法恢复，finish 必须抛错；不能把“线程已结束”误当“推流成功”。
         failing.backoff_ms = 10;
         AsyncOutput eof(failing, true, log, refuse);
         eof.open("rtmp://test-only/live", {video.context(), audio.context()});

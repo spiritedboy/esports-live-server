@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 音频链路比视频多一个缓冲层：解码器内部可能留帧，重采样器内部可能留采样。
+ * 因此正常文件结束时先 decoder.send(nullptr)，再 resampler.finish，顺序不能颠倒。
+ * 解码 PTS 先转换为微秒减容器起点，再换成 48kHz 采样位置；正偏移每毫秒增加 48。
+ * 缺失 PTS 保留 AV_NOPTS_VALUE 交给 SourceClock 推算，不能拿这个特殊整数做普通减法。
+ * resampler 的回调仍在同一音频工作线程，只有 queue_.push 才发生跨线程所有权交接。
+ * 工作线程最外层捕获异常，记录失败并关闭队列；不让异常逃出 std::thread 导致进程终止。
+ */
+/*
  * 一路音频一个工作线程：解复用 → 解码 → 同步重采样 → AudioQueue。
  * 输出统一为48kHz双声道FLTP，PTS单位是采样；同URL的视频仍由另一线程独立打开。
  */
@@ -25,7 +34,9 @@ AudioSource::AudioSource(const std::string& url, int timeout_ms, int offset_ms, 
     pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 }
 AudioSource::~AudioSource() { stop(); join(); }
+// 两种阻塞都要解除：stop_ 让 FFmpeg 中断读，queue_.close 让满队列上的 push 返回。
 void AudioSource::stop() { stop_.store(true); queue_.close(); }
+// 只在主线程回收工作线程，不能从该 worker 自己调用 join。
 void AudioSource::join() { if (worker_.joinable()) worker_.join(); }
 void AudioSource::run(std::string url, int timeout_ms, int offset_ms, Logger& log) {
     AudioResampler resampler;
@@ -76,6 +87,8 @@ void AudioSource::run(std::string url, int timeout_ms, int offset_ms, Logger& lo
                 if (!stop_) queue_.push(std::move(output));
             });
         };
+        // 循环复用一个包外壳；StreamInput::read 在填入新包前 unref 上一包。
+        // 解码器 send 只借用该外壳，并按 FFmpeg 规则保存仍需使用的缓冲引用。
         Packet packet = make_packet();
         int64_t progress = av_gettime_relative();
         while (!stop_) {
@@ -88,6 +101,7 @@ void AudioSource::run(std::string url, int timeout_ms, int offset_ms, Logger& lo
                 });
                 break;
             }
+            // 暂时无数据时短睡眠避免空转；progress 不在这里重置，所以总等待仍有上限。
             if (result == AVERROR(EAGAIN)) {
                 if (av_gettime_relative() - progress > int64_t(timeout_ms) * 1000)
                     throw std::runtime_error("音频源持续 EAGAIN 超时");
@@ -107,6 +121,7 @@ void AudioSource::run(std::string url, int timeout_ms, int offset_ms, Logger& lo
     log.log(LogLevel::Info, "音频同步：输入相位误差峰值 samples=" + std::to_string(stats.max_error) +
         "，软补偿=" + std::to_string(stats.corrections) + "，间断=" + std::to_string(stats.gaps) +
         "，时间轴重建=" + std::to_string(stats.resets) + "，缺失PTS=" + std::to_string(stats.missing));
+    // 无论正常 EOF、异常或主动停止，都通知消费者不会再有新数据，避免消费者无限等待。
     queue_.close();
 }
 }

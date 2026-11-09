@@ -1,4 +1,14 @@
 /*
+ * 初学者导读
+ * 这是独立录像工具：选择片段 → 找关键帧 → 复制压缩包并重封装，全程不解码/重编码。
+ * 因此不能精确裁到任意视频帧；请求开始时间会向前对齐关键帧，实际片段可能更长。
+ * 索引记录节目微秒位置，定位后换成分段内部毫秒；当前工具不支持一次请求跨多个分段。
+ * extract 尽快写新文件，replay 按 DTS 相对墙钟实时发送，也可以输出 RTMP。
+ * 本工具仅接受本项目无 B 帧 H.264 录像；不能将它理解成通用的任意格式剪辑器。
+ * 它不会把录像插入正在运行的 live 节目；回放和直播是不同进程入口。
+ * 正常 EOF 后显式 mux.finish，保证容器尾完成；Ctrl+C 的退出码为 130。
+ */
+/*
  * 录像提取/回放入口：索引定位 → 向前找关键帧 → 重设时间原点 → 转封装。
  * 不重新编码，不做精确逐帧裁切，也不会将录像插入正在运行的直播节目。
  */
@@ -13,6 +23,7 @@
 namespace {
 volatile std::sig_atomic_t stopped = 0;
 void stop_handler(int) { stopped = 1; }
+// 只接受非负十进制整数毫秒，并限制到一天；stoll 溢出会由 main 的 catch 处理。
 int64_t milliseconds(const std::string& s) {
     if (s.empty() || s.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("时间必须为非负整数毫秒");
@@ -50,6 +61,7 @@ int main(int argc, char** argv) {
             else if (key == "--duration-ms") duration_ms = milliseconds(value);
             else throw std::runtime_error("未知参数：" + key);
         }
+        // 索引记录绝对节目时间，选中 [start_us,end_us) 后换成分段内时间；不自动拼接下一段。
         if (!index_path.empty()) {
             if (!input.empty() || list) throw std::runtime_error("索引定位不可同时指定input或list-keyframes");
             std::ifstream index(index_path);
@@ -102,6 +114,7 @@ int main(int argc, char** argv) {
         if (context->duration != AV_NOPTS_VALUE && start_ms * 1000 >= context->duration)
             throw std::runtime_error("请求起点超出录像时长");
         esports::Packet packet = esports::make_packet();
+        // 列出关键帧 DTS 相对容器起点的微秒位置及原文件字节位置，只读扫描，不创建输出。
         if (list) {
             std::cout << "keyframe_us\tbyte_position\n";
             while (!stopped) {
@@ -116,6 +129,7 @@ int main(int argc, char** argv) {
             return stopped ? 130 : 0;
         }
         io.arm();
+        // seek 指定 video 索引时 target 必须采用该视频轨道 time_base，而不是默认微秒。
         const int64_t target = av_rescale_q(base + start_ms * 1000, AVRational{1, AV_TIME_BASE},
                                            context->streams[video]->time_base);
         // target用选定视频流time_base，向请求时间之前的关键帧定位；实际片段可能比请求更早。
@@ -135,6 +149,7 @@ int main(int argc, char** argv) {
             if (packet->dts == AV_NOPTS_VALUE || packet->pts == AV_NOPTS_VALUE)
                 throw std::runtime_error("录像包缺少时间戳");
             const int64_t dts = av_rescale_q(packet->dts, tb, AVRational{1, AV_TIME_BASE});
+            // seek 后读到的第一包未必是所需关键帧，继续跳过直到可独立解码的视频起点才写输出头。
             if (!opened) {
                 if (index != video || !(packet->flags & AV_PKT_FLAG_KEY)) {
                     av_packet_unref(packet.get()); continue;
@@ -146,6 +161,7 @@ int main(int argc, char** argv) {
                     "，请求起点us=" + std::to_string(start_ms*1000));
             }
             if (!mux.selected(index) || dts < origin) { av_packet_unref(packet.get()); continue; }
+            // 每条已选择轨道都到达结束边界才停止，避免交错读取时先截掉另一轨的尾包。
             if (dts >= limit) {
                 ended[index] = true;
                 bool all = true;

@@ -1,4 +1,14 @@
 /*
+ * 初学者导读
+ * 重采样同时完成采样率转换、声道布局转换及采样格式转换，输出固定 FLTP/48kHz/双声道。
+ * FLTP 的 P 表示 planar：左右声道分别位于 extended_data[0] 和 [1]，元素类型 float。
+ * 预测输入位置 = 下一个输出位置 next_ + swr 内部尚未输出的延迟采样。
+ * error 是源时间与预测时间之差：大于 24 采样（0.5ms）渐进补偿，大于 4800（100ms）重建。
+ * 小误差用一秒的距离渐变消化，每次最多补偿 ±240 采样，避免突然删除整块声音。
+ * 间断时 next_ 只向前移动；空出的时间段由 AudioQueue/read_window 保持静音。
+ * swr_get_out_samples 给出容量上界，swr_convert 返回实际数量；推进 PTS 必须用实际数量。
+ */
+/*
  * 直播音频时钟适配：将不同采样率/布局转换为48kHz双声道FLTP。
  * 小误差通过swr_set_compensation逐渐修正；大间断重建重采样状态，队列负责补静音。
  */
@@ -7,6 +17,7 @@
 #include <algorithm>
 #include <cstdlib>
 namespace esports {
+// swr 和保存的声道布局各有自己的资源；释放一个不会替代另一个的 uninit。
 AudioResampler::~AudioResampler() {
     swr_free(&context_);
     av_channel_layout_uninit(&layout_);
@@ -14,6 +25,7 @@ AudioResampler::~AudioResampler() {
 void AudioResampler::send(const AVFrame* frame, int64_t pts, const FrameConsumer& consume) {
     if (frame->sample_rate <= 0 || frame->nb_samples <= 0 || frame->nb_samples > 8192 ||
         !av_channel_layout_check(&frame->ch_layout)) throw std::runtime_error("无效的输入音频帧");
+    // 把输入 nb_samples/input_sample_rate 秒换成 48kHz 刻度，再交给 SourceClock 推算下一起点。
     const int64_t duration = av_rescale_q(frame->nb_samples, AVRational{1, frame->sample_rate},
                                          AVRational{1, 48000});
     pts = clock_.map(pts, duration);
@@ -47,6 +59,7 @@ void AudioResampler::send(const AVFrame* frame, int64_t pts, const FrameConsumer
         ff_check(swr_set_compensation(context_, delta, 48000), "补偿音频时钟漂移");
         ++stats_.corrections;
     }
+    // 容量是上界而非实际产量；滤波延迟和软补偿都会使一次输入/输出采样数不相等。
     const int capacity = swr_get_out_samples(context_, frame->nb_samples);
     ff_check(capacity, "计算同步音频缓存");
     if (capacity <= 0 || capacity > 8192) throw std::runtime_error("同步重采样缓存超过上限");
@@ -57,6 +70,7 @@ void AudioResampler::send(const AVFrame* frame, int64_t pts, const FrameConsumer
     next_ += output->nb_samples;
     if (output->nb_samples) consume(std::move(output));
 }
+// nullptr 输入表示“只输出内部尾巴”；持续调用直到返回 0，防止丢掉滤波器缓存采样。
 void AudioResampler::finish(const FrameConsumer& consume) {
     if (!context_) return;
     while (true) {
@@ -68,6 +82,7 @@ void AudioResampler::finish(const FrameConsumer& consume) {
         consume(std::move(output));
     }
 }
+// 组合两层统计：本层的重采样误差/补偿，和 SourceClock 的缺失/时间轴重建。
 AudioSyncStats AudioResampler::stats() const {
     AudioSyncStats result = stats_;
     result.resets = clock_.resets();

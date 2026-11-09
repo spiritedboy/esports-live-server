@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 先看 audio_frame：设置元信息 → 分配音频缓冲 → 填零静音；只 alloc 外壳还不能写采样。
+ * 再看 mix：检查所有输入窗口相同 → 每采样更新增益 → 同声道求和 → 左右联动限幅。
+ * 假设两路采样分别为 0.25 和 0.5，增益为 0.5 和 0，则过渡结束后输出为 0.125。
+ * 如果求和峰值超过 0.95，则共同缩小左右声道，避免只压一边造成声像移动。
+ * 这是一种简单峰值保护，没有实现响度测量、均衡器或专业动态压缩器。
+ * 调用者保留各输入 Frame 的所有权；mix 读取裸指针并返回独立分配的新 Frame。
+ */
+/*
  * 混音器接收已对齐到同一采样窗口的PCM：逐源增益 → 求和 → 双声道联动限幅。
  * 不在此解码或调整时间轴；增益状态与mix均由主处理线程访问。
  */
@@ -26,6 +35,7 @@ AudioMixer::AudioMixer(size_t sources) : gains_(sources) {
     if (!sources || sources > 4) throw std::runtime_error("混音支持 1–4 路");
     for (size_t i = 0; i < sources; ++i) update(i);
 }
+// 每次重新设置目标都从当前实际增益渐变，连续多次调整也不会瞬间跳到旧目标。
 void AudioMixer::update(size_t index) {
     Gain& gain = gains_.at(index);
     gain.target = gain.muted ? 0 : gain.value;
@@ -49,6 +59,7 @@ Frame AudioMixer::mix(const std::vector<const AVFrame*>& frames, int64_t pts, in
             throw std::runtime_error("混音输入未按采样时间对齐");
     }
     Frame output = audio_frame(samples, pts);
+    // 最外层按时间采样位置推进，确保两个声道使用同一个瞬时增益和限幅系数。
     for (int sample = 0; sample < samples; ++sample) {
         double sum[2] = {};
         for (size_t i = 0; i < frames.size(); ++i) {
@@ -58,6 +69,7 @@ Frame AudioMixer::mix(const std::vector<const AVFrame*>& frames, int64_t pts, in
                 if (--gain.remaining == 0) gain.current = gain.target;
             }
             for (int channel = 0; channel < 2; ++channel) {
+                // extended_data[channel] 是该声道 float 数组；不能按交错 LRLR 的 packed 布局解释。
                 const float value = reinterpret_cast<const float*>(frames[i]->extended_data[channel])[sample];
                 if (!std::isfinite(value)) throw std::runtime_error("PCM 包含非有限采样");
                 sum[channel] += value * gain.current;

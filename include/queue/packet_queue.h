@@ -1,4 +1,15 @@
 /*
+ * 初学者导读
+ * 此处传递的是编码包，不是原始帧。QueuedPacket 同时保存包和解释时间戳所需的 time_base。
+ * bytes 包含包数据及附加数据的计量；包数与字节上限一起约束内存，不能只限制包数。
+ * 本地输出满时等待，保留完整内容；网络输出满或媒体跨度过大时丢弃整个旧窗口。
+ * H.264 的 P 帧依赖此前图像，随便丢几帧后接着发会破坏参考链；恢复要等新关键帧。
+ * waiting_key_ 是接收门控，key_requested_ 是通知编码器生成 IDR 的一次性请求。
+ * epoch_ 每次 reset 增加：已经出队但尚未写入的包，也能通过代次检查判为过期。
+ * push 返回 true 在网络模式也可能意味着按策略丢掉该包，不等于最终发送成功。
+ * close(false) 保留待排空数据，close(true) 丢弃数据；取消与正常结束需要不同策略。
+ */
+/*
  * 编码包队列是直播延迟控制的边界：本地背压保数据，实时网络清旧窗口等新关键帧。
  * epoch是缓存代次；出队后仍可能失效，消费者写入前必须再次核对。
  */
@@ -35,6 +46,7 @@ public:
         if (!limits.packets || !limits.bytes || limits.latency_ms <= 0)
             throw std::invalid_argument("编码队列上限无效");
     }
+    // 先计量再入队；本地模式等待空位，实时模式可能清窗口并拒收非关键帧。
     bool push(QueuedPacket item) {
         std::unique_lock<std::mutex> lock(mutex_);
         if (item.bytes > limits_.bytes) throw std::runtime_error("单个编码包超过队列字节上限");
@@ -62,6 +74,7 @@ public:
         readable_.notify_one();
         return true;
     }
+    // 阻塞直到有包或关闭。成功时 move 到调用方；关闭且无包返回 false，作为循环结束条件。
     bool pop(QueuedPacket& item) {
         std::unique_lock<std::mutex> lock(mutex_);
         readable_.wait(lock, [&] { return closed_ || !queue_.empty(); });
@@ -73,10 +86,12 @@ public:
         writable_.notify_all();
         return true;
     }
+    // 外部请求使整批旧数据失效；这里只拿锁，实际重置集中在 reset_locked，避免重复加锁。
     void reset() {
         std::lock_guard<std::mutex> lock(mutex_);
         reset_locked();
     }
+    // discard=false 对应正常排空，true 对应取消。close 还必须唤醒满队列上的生产者。
     void close(bool discard = false) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (discard) {
@@ -87,14 +102,17 @@ public:
         closed_ = true;
         readable_.notify_all(); writable_.notify_all();
     }
+    // 消费者出队后可能遇到并发 reset，真正写入前应再次核对这个包的代次。
     bool current(uint64_t epoch) const {
         std::lock_guard<std::mutex> lock(mutex_);
         return epoch == epoch_;
     }
+    // 补记消费者在出队后丢弃的包；此时它已经不在 queue_，不能再扣一次队列字节数。
     void dropped(const QueuedPacket& item) {
         std::lock_guard<std::mutex> lock(mutex_);
         dropped_locked(item);
     }
+    // 读出并清除一次性请求；上层将下一视频帧标为 I，编码器 forced-idr 保证恢复参考链。
     bool take_key_request() {
         std::lock_guard<std::mutex> lock(mutex_);
         const bool value = key_requested_;
@@ -103,6 +121,8 @@ public:
     }
     PacketQueueStats snapshot() const { std::lock_guard<std::mutex> lock(mutex_); return stats_; }
 private:
+    // 调用者已持锁。容量比较先用减法避免加法溢出；网络媒体跨度扫描所有 DTS 的最小/最大值。
+    // 媒体跨度不等于真实等待时长，真实包年龄还会由 AsyncOutput 检查。
     bool overflow(const QueuedPacket& item) const {
         if (queue_.size() >= limits_.packets || item.bytes > limits_.bytes - stats_.bytes) return true;
         if (!realtime_ || queue_.empty()) return false;
@@ -110,6 +130,7 @@ private:
         for (const auto& value : queue_) { low = std::min(low, value.dts_us); high = std::max(high, value.dts_us); }
         return high - low > int64_t(limits_.latency_ms) * 1000;
     }
+    // 仅更新丢弃计数，不负责释放对象；实际释放由清容器或局部 Packet 的析构完成。
     void dropped_locked(const QueuedPacket& item) {
         if (item.video) ++stats_.dropped_video; else ++stats_.dropped_audio;
     }
@@ -123,6 +144,7 @@ private:
         waiting_key_ = key_requested_ = true;
         writable_.notify_all();
     }
+    // 以下普通状态都受 mutex_ 保护；epoch 表示窗口代次，stats 记录当前占用和历史峰值。
     PacketQueueLimits limits_;
     bool realtime_, waiting_key_, key_requested_, closed_ = false;
     uint64_t epoch_ = 0;

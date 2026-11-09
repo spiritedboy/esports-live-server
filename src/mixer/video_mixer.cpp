@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 滤镜图像一条有名字的管线：[in0]/[in1] 接 buffer，处理中间标签连 scale/stack，
+ * 最终 [out] 接 buffersink。AVFilterInOut 链表用于把字符串里的名字接到已有节点。
+ * configure 会替换整个图；parse_ptr 会修改端点链表，所以异常时释放当前链表头。
+ * 输入 time_base 声明为 1/fps，mix 传 tick；不要把微秒 PTS 直接交给这个滤镜图。
+ * 每路新建 AVFrame 引用再送图，保护主线程还要复用的 current 源帧。
+ * 图输出暂时仍是 tick 单位，run_live 会在送编码器前换成 1/90000。
+ */
+/*
  * 合成器只处理同一节目时刻的帧；选帧和缺失源处理由上层调度完成。
  * 滤镜图路径为buffer → scale/stack/overlay → buffersink，图及子节点归本类持有。
  */
@@ -51,6 +60,7 @@ void VideoMixer::configure(const std::string& layout, int width, int height, int
         if (!raw_inputs->name) throw std::bad_alloc();
         raw_inputs->filter_ctx = sink_;
         raw_inputs->pad_idx = 0;
+        // 下面只拼接 FFmpeg 滤镜表达式；真正构建连接和检查格式由 parse_ptr/config 完成。
         std::ostringstream filter;
         if (layout == "grid") {
             for (int i = 0; i < 4; ++i)
@@ -71,6 +81,7 @@ void VideoMixer::configure(const std::string& layout, int width, int height, int
         ff_check(avfilter_graph_parse_ptr(graph_, filter.str().c_str(),
                                           &raw_inputs, &raw_outputs, nullptr), "连接视频滤镜");
         if (raw_inputs || raw_outputs) throw std::runtime_error("视频滤镜存在未连接端点");
+        // 让 FFmpeg 协商各节点的格式、尺寸和时间基；成功后才允许向 buffer 送帧。
         ff_check(avfilter_graph_config(graph_, nullptr), "配置视频滤镜图");
     } catch (...) {
         avfilter_inout_free(&raw_inputs);
@@ -88,6 +99,7 @@ Frame VideoMixer::mix(const std::vector<const AVFrame*>& frames, int64_t tick) {
         // 原始输入仍由上层持有；滤镜只接管这里新建的引用。
         ff_check(av_buffersrc_add_frame_flags(sources_[i], reference.get(), 0), "输入合成帧");
     }
+    // sink 把节目图像引用放进新帧头；返回帧由调用者拥有，不依赖本次局部 reference 继续存在。
     Frame output = make_frame();
     ff_check(av_buffersink_get_frame(sink_, output.get()), "获取合成帧");
     if (output->pts != tick) throw std::runtime_error("合成输出时间戳不匹配");

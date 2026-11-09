@@ -1,4 +1,12 @@
 /*
+ * 初学者导读
+ * 读取阶段依次调用 avformat_open_input、avformat_find_stream_info、av_read_frame。
+ * find_stream_info 会探测媒体，可能需要读网络，所以也必须设置中断和超时。
+ * RTSP 使用 TCP 传输选项；RTMP 由 FFmpeg 协议层处理，这里不自行实现协议。
+ * read 返回的包可能属于音轨或视频轨；调用方用 stream_index 过滤自己需要的轨道。
+ * 网络错误、超时与文件正常结束必须区分，否则断流可能被误记为成功完成。
+ */
+/*
  * 解复用边界：FFmpeg负责协议及容器解析，本类只返回压缩AVPacket。
  * 一个实例归一个执行线程使用；AVFormatContext由本类关闭，IoControl是借用引用。
  */

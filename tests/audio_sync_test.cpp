@@ -1,3 +1,11 @@
+/*
+ * 初学者导读
+ * 测试使用已知常量 PCM，便于算出期望幅度；第 1000 个采样已经越过 240 采样的增益过渡。
+ * 漂移测试模拟 600 秒媒体，不实际睡眠 600 秒；±1000ppm 表示源时钟每秒偏 ±1ms。
+ * 回调检查每个输出块起点等于上一块终点，验证补偿改变采样数时仍保持连续 PTS。
+ * 后续主动输入缺失、重复、回退和大跳变 PTS，验证修复计数与不重叠输出。
+ * 最后验证窗口部分覆盖时保留静音，以及关闭满队列能唤醒阻塞生产者。
+ */
 // 用确定的PCM检验增益、限幅、采样窗口和时钟修复；600秒是加速媒体时间，不是实际等待600秒。
 #include "mixer/audio_mixer.h"
 #include "sync/audio_resampler.h"
@@ -7,6 +15,7 @@
 #include <thread>
 #include <atomic>
 namespace {
+// 按 FLTP 两个平面分别填常量；value 表示线性采样幅度，不能用 memset 的字节值替代。
 void fill(AVFrame* frame, float value) {
     for (int c = 0; c < 2; ++c)
         std::fill(reinterpret_cast<float*>(frame->extended_data[c]),
@@ -51,6 +60,7 @@ int main() {
                   << "采样，峰值=" << stats.max_error << "，补偿次数=" << stats.corrections << '\n';
         if (!stats.corrections || stats.gaps || stats.max_error > 240 || error > 160) return 4;
     }
+    // 独立实例测试异常，避免前面的十分钟漂移状态影响这里对重建次数的判断。
     AudioResampler broken;
     Frame input = audio_frame(1024, 0);
     int64_t last_end = INT64_MIN;
@@ -78,6 +88,7 @@ int main() {
     if (!queue.read_window(window.get(), filled, 0) || filled != 480) return 6;
     const float* pcm = reinterpret_cast<float*>(window->data[0]);
     if (pcm[239] != 0 || pcm[240] != .5f || pcm[719] != .5f || pcm[720] != 0) return 7;
+    // 此处使用 AudioQueue 默认 32 块容量，不是 live_pipeline 配置的默认 16 块。
     AudioQueue full;
     for (int i = 0; i < 32; ++i) full.push(audio_frame(1024, i * 1024));
     std::atomic<bool> done(false);

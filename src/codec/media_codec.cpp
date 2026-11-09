@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 把 send/receive 看成有缓冲的状态机：send 提交输入，receive 尝试拿走全部已有输出。
+ * EAGAIN 不是坏包：当前这一步暂时不能继续，要先在另一侧推进；EOF 才是排空终点。
+ * 解码器参数来自 AVStream.codecpar，编码器参数则由节目输出规格决定。
+ * FFmpeg 返回的编解码器描述符是借用指针；分配出的 context 才由 CodecContext 持有。
+ * metrics 只包围 FFmpeg 调用；consume 还可能做缩放、排队、录制，不能混算进该耗时。
+ * 本项目输出禁用 B 帧降低重排序延迟，但输入允许解码含 B 帧的视频。
+ */
+/*
  * 封装FFmpeg send/receive状态机。一次输入可能产生零个或多个输出，必须循环receive。
  * send借用输入对象；回调按值接收RAII对象并取得所有权；nullptr表示排空延迟数据。
  */
@@ -7,6 +16,8 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 namespace esports {
+// 第一步选择解码实现并分配上下文，第二步复制 codecpar，最后 open2 建立可送包状态。
+// stream 只用于读取参数，context_ 自己持有所需的副本。
 void MediaDecoder::open(const AVStream* stream) {
     if (context_) throw std::logic_error("解码器已打开");
     const AVCodecID id = stream->codecpar->codec_id;
@@ -23,6 +34,8 @@ void MediaDecoder::open(const AVStream* stream) {
     context_->err_recognition = AV_EF_CAREFUL | AV_EF_EXPLODE;
     ff_check(avcodec_open2(context_.get(), codec, nullptr), "打开解码器");
 }
+// 一次 send 可能释放多帧，必须接收直到 EAGAIN/EOF。每次循环分配独立帧头，
+// 这样回调把帧移到队列后，下一次 receive 不会覆盖已交付帧的数据。
 int MediaDecoder::drain(const FrameConsumer& consume) {
     while (true) {
         Frame frame = make_frame();
@@ -70,6 +83,8 @@ void MediaEncoder::open_video(int width, int height, int fps, const VideoEncodin
     context_->bit_rate = options.bitrate;
     context_->gop_size = options.gop_frames ? options.gop_frames : fps * 2;
     if (options.low_latency) {
+        // VBV 将码率与允许缓存时长关联：1.2Mbit/s × 500ms = 600000bit。
+        // 这控制编码码率突发，不保证网络和播放器总延迟小于 500ms。
         context_->rc_max_rate = options.bitrate;
         context_->rc_buffer_size = static_cast<int>(int64_t(options.bitrate) * options.vbv_ms / 1000);
         context_->rc_initial_buffer_occupancy = context_->rc_buffer_size / 2;
@@ -86,6 +101,8 @@ void MediaEncoder::open_video(int width, int height, int fps, const VideoEncodin
     ff_check(av_opt_set(context_->priv_data, "tune", "zerolatency", 0), "设置 x264 tune");
     ff_check(avcodec_open2(context_.get(), codec, nullptr), "打开 H.264 编码器");
 }
+// AAC 需要浮点平面 PCM；打开后 frame_size 才是实际要求的输入块长。
+// PTS 以每声道采样数计，例如连续两块 1024 采样分别使用 0、1024。
 void MediaEncoder::open_audio() {
     if (context_) throw std::logic_error("编码器已打开");
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
@@ -100,6 +117,8 @@ void MediaEncoder::open_audio() {
     context_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     ff_check(avcodec_open2(context_.get(), codec, nullptr), "打开 AAC 编码器");
 }
+// 每次 receive_packet 给出一包压缩数据；可能延迟到后续 send 或最终排空才有输出。
+// 将 Packet 移给回调后当前变量为空，不会发生二次释放。
 int MediaEncoder::drain(const PacketConsumer& consume) {
     while (true) {
         Packet packet = make_packet();

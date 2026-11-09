@@ -1,4 +1,14 @@
 /*
+ * 初学者导读
+ * 录制和推流共享编码结果，但必须使用不同 AVPacket 外壳，因为封装会改时间戳并消耗引用。
+ * submit 的主要工作是计量容量和 clone 后入队，实际磁盘 I/O 由 run 在锁外执行。
+ * 分段先等关键帧；到目标时长后的下一关键帧成为下一段的第一包，而不是上一段的尾包。
+ * 每段封装使用自己的共同时间原点，索引则记录节目时间轴上的 start_us/end_us。
+ * finalize 先写媒体尾，再写 TSV 索引；索引中只发布已完成片段，便于 replay 定位。
+ * 队列满或写失败可使当前片段不完整；fail 清掉积压并禁用录制，主直播不等待磁盘恢复。
+ * 索引 fflush 仅刷新用户态缓冲，这不是断电后文件与索引一致性的事务保证。
+ */
+/*
  * 编码后独立录制支路，不重复编码。submit克隆包引用，工作线程负责分段封装和索引。
  * 磁盘慢/写失败只关闭录制；直播继续。只有写尾成功的片段才登记索引。
  */
@@ -11,6 +21,7 @@
 namespace esports {
 Recorder::Recorder(const RecordingOptions& options, Logger& log) : options_(options), log_(log) {}
 Recorder::~Recorder() { finish(); avformat_free_context(description_); }
+// 故障隔离出口。清缓存时 Packet 的 RAII 释放仅减少录制持有的引用，不破坏主输出的引用。
 void Recorder::fail(const std::string& reason) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -20,6 +31,7 @@ void Recorder::fail(const std::string& reason) {
     ready_.notify_all();
     log_.log(LogLevel::Error, "录制已停止，直播继续：" + reason);
 }
+// 将前缀变为绝对路径，让索引在从不同工作目录运行 replay 时仍能找到分段。
 void Recorder::open(const std::vector<AVCodecContext*>& codecs) {
     if (options_.prefix.empty()) return;
     try {
@@ -45,6 +57,7 @@ void Recorder::open(const std::vector<AVCodecContext*>& codecs) {
         pthread_sigmask(SIG_SETMASK, &old, nullptr);
     } catch (const std::exception& e) { fail(e.what()); }
 }
+// 不等待磁盘写完；但仍短暂加锁保护入队。容量不足时关闭录制，避免把磁盘背压传给直播。
 void Recorder::submit(const AVPacket* packet, AVRational tb) {
     if (options_.prefix.empty()) return;
     try {
@@ -81,6 +94,7 @@ void Recorder::run() {
     bool published = false;
     // 先成功写尾再发布索引，防止把未完成的MP4当作可回放片段。
     // 这不提供断电持久性保证；AAC边界也不保证采样级无缝。
+    // 只有 mux.finish 成功后才发布索引；写尾失败会跳到 catch，不把坏片段宣布为可回放。
     const auto finalize = [&] {
         if (!mux) return;
         mux->finish();
@@ -106,6 +120,7 @@ void Recorder::run() {
                 if (queue_.empty()) break;
                 item = std::move(queue_.front()); queue_.pop_front(); bytes_ -= item.bytes;
             }
+            // 切段判断用视频关键帧的 DTS；音频包不能触发新段，否则新段可能无法独立解码。
             const bool key = item.packet->stream_index == 0 && (item.packet->flags & AV_PKT_FLAG_KEY);
             // 目标时长到达后等下一IDR才切段，让每段视频能独立解码；实际时长可能更长。
             if (mux && key && item.dts_us - origin >= int64_t(options_.segment_ms) * 1000) {

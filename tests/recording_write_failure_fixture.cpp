@@ -1,3 +1,12 @@
+/*
+ * 初学者导读
+ * 此辅助程序由 Python 测试启动；stdout 是二进制 FLV，所有诊断都必须发到 stderr。
+ * RLIMIT_FSIZE 限制普通文件大小，从而真实触发录制写失败；stdout 管道不受该限制。
+ * 主支路仍经过真实编码和封装，可验证录制失败没有截断主直播数据。
+ * 分流前为每个视频包生成 SHA256，外层与同次运行的 FLV 数据对照，检验内容完整性。
+ * Annex B 起始码与 FLV 的 AVCC 长度前缀不同，先统一表示再计算摘要，避免误报。
+ * 两个不同编码运行的输出未必逐字节相同，所以这里使用同次运行的分流前参考值。
+ */
 // 用RLIMIT_FSIZE触发录制EFBIG，同时通过管道保留直播支路；分流前摘要用于检查同次运行的数据完整性。
 #include "recording/recorder.h"
 #include "codec/media_codec.h"
@@ -17,6 +26,7 @@ struct PipeOutput {
     ~PipeOutput() {
         if (context) { if (context->pb) avio_closep(&context->pb); avformat_free_context(context); }
     }
+    // 测试专用管道封装，复制视频/音频参数并写 FLV 头；pipe:1 指 stdout，外层负责接收。
     void open(const std::vector<AVCodecContext*>& codecs) {
         esports::ff_check(avformat_alloc_output_context2(&context, nullptr, "flv", nullptr), "创建测试FLV");
         if (!context) throw std::bad_alloc();
@@ -30,11 +40,13 @@ struct PipeOutput {
         esports::ff_check(avio_open(&context->pb, "pipe:1", AVIO_FLAG_WRITE), "打开测试管道");
         esports::ff_check(avformat_write_header(context, nullptr), "测试写头");
     }
+    // 与正式封装器一致，按写头后输出轨道时间基换算；interleaved_write 会消耗当前包引用。
     void write(AVPacket* packet, AVRational tb) {
         av_packet_rescale_ts(packet, tb, context->streams[packet->stream_index]->time_base);
         packet->pos = -1;
         esports::ff_check(av_interleaved_write_frame(context, packet), "管道输出包");
     }
+    // 必须写尾并检查 AVIO 错误，防止仅统计提交包数而漏掉实际管道写失败。
     void finish() {
         esports::ff_check(av_write_trailer(context), "管道写尾");
         avio_flush(context->pb);
@@ -63,6 +75,7 @@ int main(int argc, char** argv) {
         recorder.open({video.context(), audio.context()});
         PipeOutput output; output.open({video.context(), audio.context()});
         int video_packets = 0, audio_packets = 0;
+        // 暂存同次运行的参考摘要；等录制线程 join 后再打印，防止 stderr 与线程日志交错。
         std::vector<std::string> references;
         std::unique_ptr<AVSHA, void(*)(void*)> sha(av_sha_alloc(), av_free);
         if (!sha) throw std::bad_alloc();
@@ -104,6 +117,7 @@ int main(int argc, char** argv) {
             output.write(packet.get(), audio.context()->time_base); ++audio_packets;
         };
         int64_t cursor = 0;
+        // 生成变化的亮度纹理，避免整段静止黑画面过小而无法触发预定文件大小上限。
         for (int tick = 0; tick < 100; ++tick) {
             Frame frame = make_frame();
             frame->format = AV_PIX_FMT_YUV420P; frame->width = 160; frame->height = 120;

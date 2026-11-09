@@ -1,4 +1,15 @@
 /*
+ * 初学者导读
+ * 这段代码有两个时间系统：包 DTS 是媒体时间，queued_us/写入耗时是单调墙钟时间。
+ * 两个系统可分别做差，不能直接拿 DTS 减 queued_us 来计算延迟。
+ * 恢复流程为销毁旧会话 → 清队列并请求 IDR → 可取消退避 → 再清队列 → 等新 IDR 建会话。
+ * 退避前后都清理是为了丢掉等待期间积累的旧包；恢复目标是追上直播当前时刻。
+ * 握手也会耗时，因此打开连接后还要再检查 epoch 和包年龄，不能只在出队时检查。
+ * 新会话以首个关键帧 DTS 为共同原点，先于该原点的 AAC 预卷包会丢掉。
+ * 重试次数按整个 AsyncOutput 生命期累计；输入结束但尚未恢复时必须报告失败。
+ * 本文件的故障恢复只针对输出，和 VideoSource/AudioSource 的输入断流降级是不同机制。
+ */
+/*
  * 编码线程通过有界队列交付包，输出工作线程独占FFmpeg封装与网络连接。
  * 恢复流程：丢旧窗口 → 请求新IDR → 有限退避 → 建连接/写媒体头 → 以共同原点继续音视频。
  */
@@ -63,6 +74,8 @@ void AsyncOutput::check() const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (error_) std::rethrow_exception(error_);
 }
+// 主线程调用：先检查异步错误，再验证包、计算计量值，最后移动进入有界队列。
+// 入队后再 check，尽早捕获刚刚发生的输出失败。
 void AsyncOutput::submit(Packet packet, AVRational time_base) {
     check();
     if (!worker_.joinable() || finished_) throw std::logic_error("异步输出未运行");
@@ -123,6 +136,7 @@ OutputStats AsyncOutput::snapshot() const {
     result.queue = queue_.snapshot();
     return result;
 }
+// 从这里开始是输出工作线程。sink 与 IoControl 都是局部对象，FFmpeg 会话不与主线程共用。
 void AsyncOutput::run(std::string url) {
     IoControl io(stop_, options_.timeout_ms);
     std::unique_ptr<PacketSink> sink;
@@ -153,6 +167,7 @@ void AsyncOutput::run(std::string url) {
         QueuedPacket item;
         while (!stop_ && queue_.pop(item)) {
             if (!queue_.current(item.epoch)) { queue_.dropped(item); continue; }
+            // age 衡量真实排队时长；即使只有一包、DTS 跨度为零，它也可能已经等太久。
             const int64_t age = av_gettime_relative() - item.queued_us;
             if (network_ && age > int64_t(options_.queue.latency_ms) * 1000) {
                 queue_.dropped(item);
@@ -169,6 +184,7 @@ void AsyncOutput::run(std::string url) {
                 queue_.dropped(item);
                 continue;
             }
+            // 真正打开连接放在收到可用起始包之后；网络模式先过关键帧门控再握手。
             if (!sink) {
                 try {
                     sink = factory_(io);
@@ -219,6 +235,7 @@ void AsyncOutput::run(std::string url) {
                 recover(error.what());
                 continue;
             }
+            // 只有至少一包实际写成功才算开始发送媒体，打开连接成功本身还不足以说明推流成功。
             session_started = true;
             recovering = false;
             {
@@ -245,6 +262,7 @@ void AsyncOutput::run(std::string url) {
             queue_.close(true);
         }
     }
+    // 先销毁会话，再公布 ended_us_ 并通知 finish；主线程观察到结束后 join，再释放共享描述。
     sink.reset();
     { std::lock_guard<std::mutex> lock(mutex_); ended_us_ = av_gettime_relative(); }
     wake_.notify_all();

@@ -1,4 +1,11 @@
 /*
+ * 初学者导读
+ * 读代码顺序：level_name 把等级转文字 → log 过滤 → 加锁 → 格式化 UTC → 转义 → 输出。
+ * gmtime_r 将结果写进调用方局部 tm，避免共享静态时间结构的线程安全问题。
+ * output_.flush 让诊断尽快可见，但这会增加 I/O 次数，不能把日志耗时算作解码耗时。
+ * 换行被转义为可见字符，保证“一次 log 调用对应一条物理日志行”。
+ */
+/*
  * 多个媒体线程共享日志器；一条消息在同一互斥锁内完成格式化和输出。
  * 日志用UTC系统时间便于定位事件，媒体调度则使用单调时钟，二者用途不同。
  */
@@ -11,6 +18,7 @@
 
 namespace esports {
 namespace {
+// 返回字符串字面量，不分配内存也不需要释放；未知枚举值提供可识别兜底文本。
 const char* level_name(LogLevel level) {
     switch (level) {
     case LogLevel::Debug: return "DEBUG";
@@ -29,6 +37,7 @@ void Logger::log(LogLevel level, const std::string& message) {
     if (level < minimum_) {
         return;
     }
+    // 锁覆盖构造和写出整行；作用域结束自动解锁，防止中途异常漏解锁。
     std::lock_guard<std::mutex> lock(mutex_);
     const std::time_t now = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());

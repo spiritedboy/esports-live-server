@@ -1,4 +1,12 @@
 /*
+ * 初学者导读
+ * 这是独立诊断程序，不是直播入口；先运行它可发现头文件与动态库主版本不匹配。
+ * LIBxxx_VERSION_INT 来自编译时头文件，xxx_version() 来自实际加载的运行库。
+ * 二者主版本一致只是兼容性初筛，不能证明所有能力已经能在真实流上运行。
+ * 能力检查查询注册表，不分配编码器实例，也不连接 RTMP 服务器。
+ * 当前退出码依据库主版本兼容性；缺少编码器/协议只打印警告，不因此返回失败。
+ */
+/*
  * 环境检测入口：比较编译头文件与运行库版本，查询编码器/封装器/协议是否注册。
  * 这里不创建媒体流水线；能力存在并不等于真实推流已通过验收。
  */
@@ -18,6 +26,7 @@ extern "C" {
 }
 
 namespace {
+// FFmpeg 将 major/minor/micro 编入无符号整数，用官方宏拆分，避免自己猜位宽。
 std::string version_string(unsigned version) {
     std::ostringstream out;
     out << AV_VERSION_MAJOR(version) << '.' << AV_VERSION_MINOR(version)
@@ -25,6 +34,7 @@ std::string version_string(unsigned version) {
     return out.str();
 }
 
+// 每个库分别比较编译期和运行期主版本；完整版本仍打印，便于定位加载了哪套库。
 bool check_library(esports::Logger& log, const char* name,
                    unsigned headers, unsigned runtime) {
     const bool compatible = AV_VERSION_MAJOR(headers) == AV_VERSION_MAJOR(runtime);
@@ -35,6 +45,7 @@ bool check_library(esports::Logger& log, const char* name,
     return compatible;
 }
 
+// opaque 是枚举游标，初始 nullptr；第二参数 1 表示枚举输出协议，不是输入协议。
 bool has_rtmp_output() {
     void* opaque = nullptr;
     const char* name = nullptr;

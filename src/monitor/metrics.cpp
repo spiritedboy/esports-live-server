@@ -1,4 +1,12 @@
 /*
+ * 初学者导读
+ * 性能报告把媒体累计计数与进程区间资源使用放在同一行，方便定位瓶颈。
+ * CPU% = 区间进程 CPU 微秒 / 区间墙钟微秒 ×100；两核都忙时可以接近 200%。
+ * 输入 FPS 汇总所有视频源；输出 FPS 是成功写出的节目视频包速率，比较时先看定义。
+ * RSS 当前值来自 /proc/self/status，峰值来自 getrusage；二者单位都是 Linux 的 KiB。
+ * 文件必须是新路径；每次 sample 刷新并检查写错误，不把“报告没写成功”伪装成正常。
+ */
+/*
  * 采样进程及媒体指标并写CSV；由主处理线程调用。
  * CPU为采样区间的进程CPU时间/墙钟时间，100%代表一个逻辑核，可超过100%。
  */
@@ -29,6 +37,7 @@ MetricsFile::MetricsFile(const std::string& path) {
 MetricsFile::~MetricsFile() { if (file_) std::fclose(file_); }
 void MetricsFile::sample(const PipelineMetrics& data) {
     if (!file_) return;
+    // 区间至少设为 1 微秒避免除零；速率根据本次与上次计数差计算。
     const int64_t now = av_gettime_relative(), interval = std::max<int64_t>(1, now - previous_wall_);
     struct rusage usage = {};
     if (getrusage(RUSAGE_SELF, &usage)) throw std::runtime_error("读取进程CPU统计失败");
@@ -60,6 +69,7 @@ void MetricsFile::sample(const PipelineMetrics& data) {
         static_cast<unsigned long long>(data.audio_late), static_cast<unsigned long long>(data.output_dropped),
         static_cast<long long>(data.skipped_video), static_cast<long long>(data.skipped_audio)) < 0) || bad;
     if (std::fflush(file_) || bad) throw std::runtime_error("性能指标写入失败");
+    // 写入成功后才更新基线；下一次 sample 使用这一时刻计算新的区间指标。
     previous_wall_ = now; previous_cpu_ = cpu; previous_input_ = inputs; previous_output_ = data.output_video;
 }
 }

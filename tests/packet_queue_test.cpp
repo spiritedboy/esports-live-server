@@ -1,9 +1,18 @@
+/*
+ * 初学者导读
+ * 构造小编码包只用来检验队列行为，里面不是合法 H.264，不会送进解码器或网络。
+ * 实时队列同时测试包数、字节数、媒体时间跨度超限，并确认恢复前只接收视频关键帧。
+ * old 包出队后 reset，再查 current(old.epoch)，验证已离开队列的数据也能被判失效。
+ * 本地模式用极大 DTS 跨度验证不按网络策略丢包，再检查满队列等待与关闭后排空。
+ * 每条 return 非零表示一种契约被破坏，测试末尾返回成功才说明全部检查通过。
+ */
 // 分别检验实时模式的丢弃/IDR/代次失效，以及本地模式的阻塞和排空，二者策略不同。
 #include "queue/packet_queue.h"
 #include <thread>
 #include <atomic>
 #include <iostream>
 namespace {
+// 辅助函数分配指定大小的包，手动设置媒体类型/关键帧/时间，精确控制每一种超限条件。
 esports::QueuedPacket item(bool video, bool key, int64_t time, int bytes = 40) {
     esports::QueuedPacket out;
     out.packet = esports::make_packet();
@@ -17,6 +26,7 @@ int main() {
     using namespace esports;
     PacketQueueLimits limits;
     limits.packets = 2; limits.bytes = 100; limits.latency_ms = 100;
+    // 初始网络队列也要等关键帧，最开始的音频和非关键视频应计为丢弃而不入队。
     PacketQueue realtime(limits, true);
     realtime.push(item(false, false, 0));
     realtime.push(item(true, false, 0));
@@ -51,6 +61,7 @@ int main() {
     std::thread producer([&] { pushed = file.push(item(true, false, 9000000)); finished = true; });
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     const bool blocked = !finished;
+    // 消费腾出空间，生产者才能成功入队；close 后的 pop 循环应继续取完剩余两包。
     file.pop(old);
     producer.join();
     file.close();

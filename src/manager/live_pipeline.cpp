@@ -1,4 +1,16 @@
 /*
+ * 初学者导读
+ * 这是完整节目主循环，建议在理解 Frame/Packet 所有权后，沿编号 ①～⑦ 阅读。
+ * 线程关系：每路视频/音频输入各一线程，当前线程负责节目处理，推流和录制各一线程。
+ * 两条节目时钟：tick 每视频帧加 1，cursor 每音频块加实际 nb_samples。
+ * 25fps 下 tick=1 是 40ms；48kHz 下 cursor=1024 是约 21.333ms，所以要先处理音频。
+ * av_compare_ts 用两种 time_base 比较真实时刻，不比较 tick/cursor 的整数大小。
+ * 视频拿每路“不晚于节目时刻”的最新帧；音频拿相同的 [cursor,cursor+count) 窗口。
+ * 选帧、混音、编码之间传裸指针是同步借用；进入队列则必须移动或克隆出独立所有权。
+ * 正常完成要排空编码器再关输出；取消优先终止等待，未发送的尾部数据不保证完整。
+ * 当前音画差统计是节目处理进度差，不是远端播放器测得的端到端音画同步误差。
+ */
+/*
  * 完整节目调度中心。输入线程提供解码帧；本线程选帧/混音/合成/编码；输出与录制各有工作线程。
  * 阅读run_live中的编号段落：建源 → 建输出 → 分流回调 → 调度 → 视频/音频处理 → 排空退出。
  * 时间单位：tick=视频帧序号，cursor=48kHz采样位置，us=节目微秒，wall_start=单调时钟微秒。
@@ -19,6 +31,7 @@ extern "C" {
 }
 namespace esports {
 namespace {
+// 同步报告的局部 RAII 包装。FILE 持有 fdopen 接管的文件描述符，fclose 会同时关闭描述符。
 struct StatsFile {
     FILE* file = nullptr;
     explicit StatsFile(const std::string& path) {
@@ -33,6 +46,8 @@ struct StatsFile {
         }
     }
     ~StatsFile() { if (file) std::fclose(file); }
+    // t/v/a/lag 单位均为微秒；v-a 是两轨已处理终点差，可能随调度轮次正负变化。
+    // 码率按成功写出的编码字节计算，不包括 RTMP/TCP/IP 的协议开销。
     void write(int64_t t, int64_t v, int64_t a, int64_t lag, const OutputStats& output) {
         if (file && (std::fprintf(file, "%lld,%lld,%lld,%lld,%lld,%llu,%llu,%.3f,%llu,%llu,%zu,%zu,%lld,%lld,%llu\n",
             static_cast<long long>(t), static_cast<long long>(v), static_cast<long long>(a),
@@ -73,6 +88,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         ~Sources() { shutdown(); }
     } group;
     int64_t video_count = 0, audio_samples = 0, silence_samples = 0, peak_delta = 0, skipped_video = 0, skipped_audio = 0;
+    // 输入线程计数通过原子读取得，队列长度通过加锁查询；快照用于观察趋势，不是事务一致状态。
     const auto report_metrics = [&] {
         if (!metrics.enabled()) return;
         PipelineMetrics data;
@@ -123,6 +139,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         if (!usable) throw std::runtime_error("所有音视频源均失败或没有媒体");
 
         // ② 建立降级黑帧、编码器、异步输出、录制和合成器；源失效时仍能形成节目。
+        // 共享黑帧只读复用；YUV 有有限范围黑电平，不能简单把三个平面全部 memset 为 0。
         Frame black = make_frame();
         black->format = AV_PIX_FMT_YUV420P;
         black->width = options.width; black->height = options.height;
@@ -148,6 +165,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         const PacketConsumer audio_packet = [&](Packet p) {
             p->stream_index = 1; recorder.submit(p.get(), audio_encoder.context()->time_base); output.submit(std::move(p), audio_encoder.context()->time_base);
         };
+        // 每路保留上一张有效画面；队列已经弹出的帧仍由 current 持有，不会因为出队就失效。
         std::vector<Frame> current(group.videos.size());
         // ④ 节目时钟不直接用输入PTS驱动：视频tick/fps秒，音频cursor/48000秒。
         // 各源已经归一化，调度器按节目时刻选择对应画面和音频窗口。
@@ -175,6 +193,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                     output.reset_for_latency();
                 }
             }
+            // 只有所有源都关闭且缓存排空，才能用最后媒体终点结束；暂时缺帧不等于 EOF。
             bool exhausted = true;
             for (size_t i = 0; i < group.videos.size(); ++i) {
                 exhausted = exhausted && group.videos[i]->queue().exhausted();
@@ -194,6 +213,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
             const int64_t end = options.duration_ms ? int64_t(options.duration_ms) * 1000
                                                    : (exhausted ? last_end : INT64_MAX);
             if (us >= end) break;
+            // 媒体时刻减实际经过的单调时间得到需等待时长，等待分成最多 10ms 小段以响应停止。
             if (options.realtime) {
                 while (!stop) {
                     const int64_t delay = us - (av_gettime_relative() - wall_start);
@@ -236,6 +256,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                     count = static_cast<int>(std::min<int64_t>(count,
                         av_rescale_q(end, AVRational{1, AV_TIME_BASE}, AVRational{1, 48000}) - cursor));
                 if (count <= 0) break;
+                // blocks 拥有本轮各路 PCM；frames 仅借出指针给 mix，直到 mix 完成 blocks 才能销毁。
                 std::vector<Frame> blocks;
                 std::vector<const AVFrame*> frames;
                 for (auto& source : group.audios) {
@@ -248,6 +269,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
                         while (!stop && !source->queue().read_window(block.get(), filled, 10) &&
                                av_gettime_relative() < deadline) {}
                     }
+                    // 按每源每声道采样位置累计补静音量，多源会累加；它不是输出节目静音的总时长。
                     silence_samples += count - filled;
                     frames.push_back(block.get());
                     blocks.push_back(std::move(block));
@@ -274,6 +296,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
             }
         }
         // ⑦ 正常结束排空编码器尾包，再排空输出/录制队列；用户停止则优先中断推流等待。
+        // 音频编码器可能还缓存尾包。先 flush 编码器，再关闭输出队列，否则尾包将无法提交。
         if (!stop) {
             video_encoder.send(nullptr, video_packet);
             audio_encoder.send(nullptr, audio_packet);
@@ -283,6 +306,7 @@ int run_live(const LiveOptions& options, const volatile std::sig_atomic_t& stop,
         recorder.finish();
         stats.write(std::max(video_end, audio_end), video_end, audio_end,
                     (av_gettime_relative() - wall_start) - std::max(video_end, audio_end), output.snapshot());
+    // 异常时先取消输出等待；Sources 的析构仍会 stop/join 所有输入，防止悬挂线程访问局部对象。
     } catch (const std::exception&) {
         output.cancel();
         try { output.finish(&stop); } catch (const std::exception& e) { log.log(LogLevel::Warning, e.what()); }

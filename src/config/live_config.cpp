@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 这里负责 JSON 与命令行选项的适配，最终语义范围仍由 live_main 统一检查。
+ * 只接受顶层对象和受限数组，拒绝未知字段、重复字段、非法 UTF-8、非有限数字和多余文本。
+ * 限制文件大小、嵌套与数字长度，防止一份配置消耗不可控资源或被宽松解析为意外值。
+ * 字段名中的下划线变成命令行连字符，例如 video_bitrate → --video-bitrate。
+ * JSON 数字用 double 保存；整数需限制在精确可表示范围，输出时使用 classic locale。
+ * serialize_live_config 展示解析后的有效配置，包含默认值；不等同于原 JSON 文件的原样回写。
+ */
+/*
  * 启动配置适配层：严格解析JSON，再转换成既有CLI选项交给live_main统一校验。
  * 不在这里打开媒体、创建线程或维护第二套参数默认值。
  */
@@ -16,6 +25,7 @@ extern "C" {
 }
 namespace esports {
 namespace {
+// 按 UTF-8 逐码点前进；显式拒绝 NUL，避免 C++ 字符串长度与底层 C 字符串终止位置不一致。
 void valid_text(const std::string& text) {
     const uint8_t* pos = reinterpret_cast<const uint8_t*>(text.data());
     const uint8_t* end = pos + text.size();
@@ -29,8 +39,10 @@ void valid_text(const std::string& text) {
 class ConfigContext : public picojson::default_parse_context {
 public:
     ConfigContext(picojson::value* out, unsigned depth = 0) : default_parse_context(out), depth_(depth) {}
+    // depth=0 只允许根对象；depth=1 允许字段数组；更深的对象/数组均拒绝。
     bool parse_object_start() { return depth_ == 0 && default_parse_context::parse_object_start(); }
     bool parse_array_start() { return depth_ == 1 && default_parse_context::parse_array_start(); }
+    // 先检查键是否已存在，再插入新值；否则 map 覆盖旧值会让重复键静默生效。
     template<class Iter> bool parse_object_item(picojson::input<Iter>& in, const std::string& key) {
         valid_text(key);
         auto& object = out_->get<picojson::object>();
@@ -38,6 +50,7 @@ public:
         ConfigContext child(&object[key], depth_ + 1);
         return picojson::_parse(child, in);
     }
+    // 每个数组最多四项，对应项目最多四路源；递归子上下文提高 depth，禁止嵌套数组。
     template<class Iter> bool parse_array_item(picojson::input<Iter>& in, size_t index) {
         if (index >= 4) throw std::runtime_error("配置数组最多4项");
         auto& array = out_->get<picojson::array>();
@@ -45,6 +58,7 @@ public:
         ConfigContext child(&array.back(), depth_ + 1);
         return picojson::_parse(child, in);
     }
+    // 拒绝解析为无穷大的数字，如指数极大的值；成功才交给上游上下文保存。
     bool set_number(double number) {
         if (!std::isfinite(number)) throw std::runtime_error("配置数字必须有限");
         return default_parse_context::set_number(number);
@@ -52,6 +66,7 @@ public:
 private:
     unsigned depth_;
 };
+// 预扫描仅检查字符串外的数字词法；跟踪引号与转义，URL/路径中的数字不能被误当数值。
 void check_number_grammar(const std::string& text) {
     // PicoJSON的strtod接受部分非JSON数字；先限定词法，字符串内的数字不参与检查。
     const std::regex number("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?");
@@ -73,6 +88,8 @@ void check_number_grammar(const std::string& text) {
     }
 }
 // PicoJSON以double存数字；限制到可精确表示的整数范围，防止类型转换悄悄损失精度。
+// 将一个严格类型的标量转成命令行文本。number 控制期望类型，integral 控制是否必须整数。
+// 17 位有效数字保留 double 的可往返表示；classic locale 固定小数点为点号。
 std::string scalar(const picojson::value& value, const std::string& key, bool number, bool integral = true) {
     if (!number) {
         if (!value.is<std::string>()) throw std::runtime_error(key + "必须为字符串");
@@ -87,6 +104,7 @@ std::string scalar(const picojson::value& value, const std::string& key, bool nu
     else out << std::setprecision(17) << n;
     return out.str();
 }
+// 只转换选项名字，不改用户值；例如 audio_queue_blocks 变成 --audio-queue-blocks。
 std::string option(std::string name) { for (char& c : name) if (c == '_') c = '-'; return "--" + name; }
 }
 // 只读取普通文件且限制为1MiB；禁止重复键/未知键，防止配置拼错却悄悄回退默认值。
@@ -110,6 +128,7 @@ std::vector<std::string> load_live_config(const std::string& path) {
     // 不输出库错误中的原始片段，避免无意泄露配置中的推流凭据。
     if (!error.empty() || end != text.end() || !root.is<picojson::object>())
         throw std::runtime_error("配置JSON语法错误：需要一个对象，不允许尾随内容或嵌套对象");
+    // 维护字段白名单；新增配置必须同时考虑此列表、入口解析、默认值和序列化，不能只加 JSON 示例。
     const std::set<std::string> numbers = {"width","height","fps","duration_ms","stale_ms","timeout_ms",
         "output_timeout_ms","reconnect_attempts","retry_backoff_ms","output_latency_ms","packet_queue_count",
         "packet_queue_bytes","video_queue_frames","audio_queue_blocks","video_bitrate","gop_ms","vbv_ms",
@@ -128,6 +147,7 @@ std::vector<std::string> load_live_config(const std::string& path) {
                    key == "audio_offsets_ms" || key == "video_offsets_ms" || key == "change_gain") {
             if (!value.is<picojson::array>()) throw std::runtime_error(key + "必须为数组");
             const auto& items = value.get<picojson::array>();
+            // change_gain 的数组表示一个二元组 [源索引,目标增益]，不同于 gains 的逐路列表。
             if (key == "change_gain") {
                 if (items.size() != 2) throw std::runtime_error("change_gain必须为[索引,增益]");
                 add("--change-gain", scalar(items[0], key, true) + ":" + scalar(items[1], key, true, false));
@@ -177,6 +197,7 @@ std::string serialize_live_config(const LiveOptions& o) {
     for (int v : o.video_offsets) vo.emplace_back(static_cast<double>(v));
     result["gains"] = picojson::value(gains); result["muted"] = picojson::value(muted);
     result["audio_offsets_ms"] = picojson::value(ao); result["video_offsets_ms"] = picojson::value(vo);
+    // 禁用的定时操作不输出触发字段，避免把 -1 哨兵导出后交给只收非负整数的命令行解析器。
     if (o.switch_at_ms >= 0) { num("switch_at_ms",o.switch_at_ms); str("switch_layout",o.switch_layout); }
     if (o.change_at_ms >= 0) {
         num("change_at_ms",o.change_at_ms);

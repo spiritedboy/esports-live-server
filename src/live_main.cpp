@@ -1,4 +1,13 @@
 /*
+ * 初学者导读
+ * 这是 esports_live 的入口；它先把配置变成可靠的 LiveOptions，再调用 run_live。
+ * 阅读顺序：收集命令行 → 读取 JSON → 按覆盖规则合并 → 解析及交叉校验 → 检查/打印/运行。
+ * 逐路增益和偏移先暂存索引和值，等最终输入列表确定后再应用，避免选项先后顺序影响索引。
+ * --check-config/--dump-config 在创建媒体资源前返回，适合确认配置是否符合预期。
+ * 信号处理函数只设置 sig_atomic_t 标志，不能在里面写日志、释放 FFmpeg 或等待线程。
+ * main 最外层负责把异常转换成中文诊断和退出码；各资源对象靠 RAII 处理中途失败。
+ */
+/*
  * 完整直播程序入口。阅读顺序：收集CLI → 合并JSON → 校验LiveOptions → run_live。
  * 这里只处理启动参数和进程信号；媒体调度在manager/live_pipeline.cpp。
  */
@@ -9,7 +18,9 @@
 #include <cmath>
 namespace {
 volatile std::sig_atomic_t stop_requested = 0;
+// 异步信号上下文只做简单标记；实际取消、写尾和 join 由正常线程执行。
 void stop_handler(int) { stop_requested = 1; }
+// 只收无符号十进制文本并校验上下界，避免负数转 unsigned 后绕过检查。
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("参数必须为非负整数");
@@ -18,6 +29,7 @@ int integer(const std::string& text, int low, int high) {
         throw std::runtime_error("数值超出允许范围");
     return static_cast<int>(value);
 }
+// 布局与源数量的交叉校验：grid 必须四路；split/pip 使用前两路画面。
 void validate_layout(const std::string& layout, size_t count) {
     if (layout != "split" && layout != "pip" && layout != "grid")
         throw std::runtime_error("布局必须是 split、pip 或 grid");
@@ -52,11 +64,13 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // 这些选项按“选项名 + 源索引”覆盖；例如 CLI gain 0 不应清掉 JSON gain 1。
         const auto indexed = [](const std::string& key) {
             return key == "--gain" || key == "--audio-offset-ms" || key == "--video-offset-ms";
         };
         // 先记录CLI覆盖身份，再移除对应JSON值；这样被覆盖的旧数值不参与最终范围校验。
         // 逐路参数的身份包含索引，输入列表则整组替换；静音开关随后按顺序应用。
+        // 先收集覆盖身份再过滤 JSON；输入列表按整组替换，逐路设置只替换对应索引。
         std::set<std::string> overrides;
         for (size_t i = 0; i < command.size(); ++i) {
             const auto& key = command[i];
@@ -87,6 +101,7 @@ int main(int argc, char** argv) {
         }
         // 合并结果统一走下方原参数解析器，避免JSON与CLI出现两套默认值和校验规则。
         arguments.insert(arguments.end(), command.begin(), command.end());
+        // 解析阶段先缓存逐路修改，稍后按最终音视频列表建立数组，再用 at 拒绝越界索引。
         bool has_change = false;
         std::vector<std::pair<size_t, double>> gains;
         std::vector<std::pair<size_t, bool>> muted;
@@ -159,6 +174,7 @@ int main(int argc, char** argv) {
             else if (key == "--fps") options.fps = integer(value, 1, 60);
             else throw std::runtime_error("未知选项：" + key);
         }
+        // 下面进入跨字段校验区：单个数值合法还不够，布局、尺寸、源数、协议和配对操作也要一致。
         if (options.recording.format != "mp4" && options.recording.format != "matroska")
             throw std::runtime_error("录制格式仅支持mp4或mkv");
         if (options.recording.prefix.find_first_of("\t\r\n:") != std::string::npos)
@@ -166,6 +182,7 @@ int main(int argc, char** argv) {
         if (options.inputs.size() != 2 && options.inputs.size() != 4)
             throw std::runtime_error("合成需要 2 或 4 路输入");
         if (options.output.empty()) throw std::runtime_error("缺少输出路径");
+        // 四宫格会把宽高各除二，而 YUV420P 又要求色度尺寸兼容，所以整体尺寸约束为 4 的倍数。
         if (options.width % 4 || options.height % 4)
             throw std::runtime_error("合成宽高必须是 4 的倍数");
         validate_layout(options.layout, options.inputs.size());
@@ -180,6 +197,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("输出仅支持本地 FLV 或 RTMP");
         if (esports::starts_with(options.output, "rtmp://") && !options.realtime)
             throw std::runtime_error("RTMP 低延迟输出要求实时调度，不能使用 --no-realtime");
+        // 未单独指定音频源时继承视频 URL 列表；每路 AudioSource 仍会独立打开它。
         if (options.audio_inputs.empty()) options.audio_inputs = options.inputs;
         if (options.audio_inputs.size() > 4) throw std::runtime_error("音频源最多 4 路");
         for (const auto& url : options.audio_inputs)
@@ -199,6 +217,7 @@ int main(int argc, char** argv) {
         // 检查/导出在启动流水线前退出，不验证文件存在、端点可达或编码器能否打开。
         if (dump_config) { std::cout << esports::serialize_live_config(options) << '\n'; return 0; }
         if (check_config) { std::cout << "配置校验通过（未打开媒体或输出）\n"; return 0; }
+        // 只有配置全部检查通过才进入媒体链路；run_live 返回正常/停止状态，失败异常交给下面 catch。
         return esports::run_live(options, stop_requested, log);
     } catch (const std::exception& e) {
         log.log(esports::LogLevel::Error, e.what());

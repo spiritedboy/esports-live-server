@@ -1,4 +1,14 @@
 /*
+ * 初学者导读
+ * 从这里追踪“编码包怎么变成文件/网络数据”：复制 codecpar → 创建 AVIO → 写头 → 写包 → 写尾。
+ * AVFormatContext 负责容器，AVIOContext 负责字节 I/O；二者职责不同，释放方式也不同。
+ * 本地自定义 AVIO 保留 O_EXCL 不覆盖语义；C 回调返回错误码，外层再将其转为异常。
+ * 输出 AVStream.time_base 可能被写头过程改成容器要求的单位，不能提前缓存旧值。
+ * 例如编码 PTS=3600、time_base=1/90000，转到 1/1000 后是 40，即同一个 40ms 时刻。
+ * 交织写函数可能缓冲包，成功返回不代表数据已经完整落盘；finish 的错误必须检查。
+ * 析构只释放资源。显式 finish 是业务完成动作，尤其 MP4 需要正确写尾才能完整使用。
+ */
+/*
  * 封装与I/O边界：复制流参数 → 打开输出 → 写头 → 换算包时间戳并写入 → 写尾。
  * 实例不跨线程并发使用；本地自定义AVIO用于排他创建文件，网络交给FFmpeg协议层。
  */
@@ -18,6 +28,8 @@ namespace esports {
 StreamOutput::~StreamOutput() { close(); }
 
 // AVIO的C回调只能返回负错误码，不能让C++异常穿过FFmpeg。处理短写和EINTR后再返回。
+// opaque 是 avio_alloc_context 绑定的 this。系统 write 可能只写一部分，必须循环补齐。
+// EINTR 表示被信号打断可重试；其他错误保留 errno 对应原因供 FFmpeg 传播。
 int StreamOutput::write_file(void* opaque, uint8_t* buffer, int size) {
     StreamOutput& self = *static_cast<StreamOutput*>(opaque);
     int written = 0;
@@ -33,6 +45,7 @@ int StreamOutput::write_file(void* opaque, uint8_t* buffer, int size) {
     return written;
 }
 
+// 封装器可能查询文件大小或回写头部；AVSEEK_SIZE 是查询命令，不能直接作为 lseek 的 whence。
 int64_t StreamOutput::seek_file(void* opaque, int64_t offset, int whence) {
     StreamOutput& self = *static_cast<StreamOutput*>(opaque);
     if (whence == AVSEEK_SIZE) {
@@ -58,6 +71,7 @@ void StreamOutput::open(const std::string& url, AVFormatContext* input, Logger& 
         context_->flags |= AVFMT_FLAG_FLUSH_PACKETS;
         context_->flush_packets = 1;
     }
+    // 先把每个输入流设为“未选择”，只为受支持的音视频创建输出流，索引可能因此改变。
     mapping_.assign(input->nb_streams, -1);
     bool video = false;
     bool audio = false;
@@ -80,6 +94,7 @@ void StreamOutput::open(const std::string& url, AVFormatContext* input, Logger& 
         AVStream* target = avformat_new_stream(context_, nullptr);
         if (!target) throw std::bad_alloc();
         ff_check(avcodec_parameters_copy(target->codecpar, parameters), "复制流参数");
+        // 清掉原容器专用 tag，让新封装器按 codec_id 选择合适标识。复制编码参数不会重新编码。
         target->codecpar->codec_tag = 0;
         target->time_base = source->time_base;
         mapping_[i] = target->index;
@@ -136,6 +151,7 @@ void StreamOutput::write(AVPacket* packet, AVRational input_time_base, int64_t o
     const int index = mapping_[packet->stream_index];
     const AVRational output_time_base = context_->streams[index]->time_base;
     // 使用共同微秒原点换算到各自输入时间基，保持音视频相对偏移。
+    // 原点是微秒，而 PTS/DTS 是 input_time_base 的刻度，必须先换单位再做减法。
     const int64_t offset = av_rescale_q(origin_us, AVRational{1, AV_TIME_BASE}, input_time_base);
     const auto subtract = [offset](int64_t value) {
         if ((offset > 0 && value < std::numeric_limits<int64_t>::min() + offset) ||
@@ -152,6 +168,7 @@ void StreamOutput::write(AVPacket* packet, AVRational input_time_base, int64_t o
         throw std::runtime_error("输出时间戳无效或 DTS 不严格递增，停止转推");
     last_dts_[index] = packet->dts;
     packet->stream_index = index;
+    // 输出字节位置已和原输入无关，清除旧位置；时间基转换和流索引映射已在上面完成。
     packet->pos = -1;
     io_.arm();
     // 该API会消耗包的缓冲引用；即使失败也不拿同一包重试，调用方只负责释放外壳。
@@ -180,6 +197,8 @@ void StreamOutput::finish() {
     }
 }
 
+// 自定义 AVIO 的 buffer 可能被 FFmpeg 替换，释放 pb 当前保存的 buffer，
+// 再释放 AVIO 对象；网络 AVIO 则由 avio_closep 成套关闭。
 void StreamOutput::close() noexcept {
     if (context_) {
         if (context_->pb) {
