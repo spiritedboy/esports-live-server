@@ -11,7 +11,9 @@
 | esports_replay | 录像关键帧查询、片段提取、实时回放 | src/replay_main.cpp |
 | ffmpeg_env_check | FFmpeg六库版本与注册能力诊断 | src/env_check_main.cpp |
 
-阅读源码先看[完整代码阅读指南](docs/code-reading-guide.md)：逐项解释全部46个头文件/实现文件（含测试和第三方头文件），
+第一次读这个项目，先跟着[一步步读代码](docs/first-code-walkthrough.md)：从`src/live_main.cpp`开始，每步给出搜索词、跳转位置、停止点和自检答案。
+
+需要逐文件查询时，看[完整代码阅读指南](docs/code-reading-guide.md)：逐项解释全部46个头文件/实现文件（含测试和第三方头文件），
 并提供调用图、视频/音频追踪、时间戳实例、线程所有权和GDB观察点；系统概览见[当前架构](docs/architecture.md)。
 自有的45个头文件、实现和C++测试文件已补充初学者中文注释：文件导读、接口约定、关键分支、时间单位和资源交接。
 建议先读文件顶部导读，再顺着函数旁的解释阅读；第三方PicoJSON保持上游原样，其使用边界见配置模块和阅读指南。

@@ -811,3 +811,8 @@ code-reading-guide.md已扩展为当前全部46个.h/.cpp文件的逐项手册�
 
 建议从`video_reference_test.cpp`理解缓冲所有权，再读`frame_queue_test.cpp`理解线程交接，最后沿`run_live`追踪完整媒体链路。
 验证命令与结果见`beginner-comments-report.md`。
+
+
+## 2026-11-12：按数据流阅读源码
+
+新增`first-code-walkthrough.md`，从live_main的run_live调用开始，沿视频包→解码帧→队列→合成→编码→封装走通，再接入音频与退出。每步明确打开文件、搜索函数、停止位置和自检答案。先追踪数据与线程交接，再补时间戳修复、重连和配置细节，避免刚进入main就陷入全部参数解析。
