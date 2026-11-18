@@ -11,6 +11,8 @@
 | esports_replay | 录像关键帧查询、片段提取、实时回放 | src/replay_main.cpp |
 | ffmpeg_env_check | FFmpeg六库版本与注册能力诊断 | src/env_check_main.cpp |
 
+录屏、摄像头与主持人麦克风的具体场景，见[基础音画同步方案](docs/screen-camera-microphone-sync.md)，包含校准原因、偏移示例和当前实现边界。
+
 第一次读这个项目，先跟着[一步步读代码](docs/first-code-walkthrough.md)：从`src/live_main.cpp`开始，每步给出搜索词、跳转位置、停止点和自检答案。
 
 需要逐文件查询时，看[完整代码阅读指南](docs/code-reading-guide.md)：逐项解释全部46个头文件/实现文件（含测试和第三方头文件），
